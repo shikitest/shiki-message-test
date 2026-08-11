@@ -1111,6 +1111,37 @@
                         </div>
                     </div>
 
+                    <p class="cs-group-label" style="margin-top:4px;">回复生成方式</p>
+                    <div class="cs-card">
+                        <div class="text-generation-mode-options" id="text-generation-mode-options" role="radiogroup" aria-label="回复生成方式">
+                            <button type="button" class="text-generation-mode-opt active" data-text-generation-mode="card" role="radio" aria-checked="true">
+                                <i class="fas fa-clone"></i><span>字卡模式</span>
+                            </button>
+                            <button type="button" class="text-generation-mode-opt" data-text-generation-mode="ime" role="radio" aria-checked="false">
+                                <i class="fas fa-keyboard"></i><span>IME模式</span>
+                            </button>
+                            <button type="button" class="text-generation-mode-opt" data-text-generation-mode="mixed" role="radio" aria-checked="false">
+                                <i class="fas fa-random"></i><span>混合模式</span>
+                            </button>
+                        </div>
+                        <div class="text-generation-mode-hint">仅改变普通文字回复的来源</div>
+                    </div>
+
+                    <p class="cs-group-label" style="margin-top:4px;">翻译</p>
+                    <div class="cs-card">
+                        <div class="setting-pill-row" id="partner-translation-toggle">
+                            <span class="setting-pill-icon"><i class="fas fa-language"></i></span>
+                            <span class="setting-pill-label">显示角色消息翻译</span>
+                            <div class="setting-pill-switch"><div class="setting-pill-knob"></div></div>
+                        </div>
+                        <div class="setting-pill-row" id="user-translation-toggle">
+                            <span class="setting-pill-icon"><i class="fas fa-language"></i></span>
+                            <span class="setting-pill-label">显示我的消息日语翻译</span>
+                            <div class="setting-pill-switch"><div class="setting-pill-knob"></div></div>
+                        </div>
+                        <div class="text-generation-mode-hint" id="translation-provider-status" data-translation-provider-state="checking">正在检查翻译能力…</div>
+                    </div>
+
                     <p class="cs-group-label" style="margin-top:4px;">时间戳</p>
                     <div class="cs-card">
                         <div class="cs-time-grid" id="time-format-options">
@@ -1150,18 +1181,13 @@
 
                     <p class="cs-group-label" style="margin-top:4px;">主动发送</p>
                     <div class="cs-card">
-                        <div class="setting-pill-row" id="auto-send-toggle">
-                            <span class="setting-pill-icon"><i class="fas fa-paper-plane"></i></span>
-                            <span class="setting-pill-label">主动发消息给我</span>
-                            <div class="setting-pill-switch"><div class="setting-pill-knob"></div></div>
+                        <div class="auto-send-frequency-options" id="auto-send-frequency-options" role="radiogroup" aria-label="主动消息频率">
+                            <button type="button" class="auto-send-frequency-opt active" data-auto-send-frequency="off" role="radio" aria-checked="true">关闭</button>
+                            <button type="button" class="auto-send-frequency-opt" data-auto-send-frequency="low" role="radio" aria-checked="false">低</button>
+                            <button type="button" class="auto-send-frequency-opt" data-auto-send-frequency="normal" role="radio" aria-checked="false">普通</button>
+                            <button type="button" class="auto-send-frequency-opt" data-auto-send-frequency="high" role="radio" aria-checked="false">高</button>
                         </div>
-                        <div id="auto-send-control" style="display:none;">
-                            <div class="cs-slider-row">
-                                <span class="cs-slider-label">间隔</span>
-                                <input type="range" min="1" max="120" step="1" value="5" class="font-size-slider" id="auto-send-slider">
-                                <span class="cs-slider-val" id="auto-send-value">5分钟</span>
-                            </div>
-                        </div>
+                        <div class="text-generation-mode-hint">实时滚动计算下一次机会，不生成每日时间表</div>
                     </div>
 
                     <p class="cs-group-label" style="margin-top:4px;">消息节奏</p>
@@ -1376,6 +1402,9 @@
                 <div class="settings-item-list">
                     <div class="settings-item" id="custom-replies-function">
                         <i class="fas fa-comment-dots"></i><span>自定义回复</span>
+                    </div>
+                    <div class="settings-item" id="ime-custom-lexicon-function">
+                        <i class="fas fa-language"></i><span>IME 自定义词库</span>
                     </div>
                     <div class="settings-item" id="music-player-toggle">
                         <i class="fas fa-music"></i><span>悬浮音乐播放器</span>
@@ -2246,7 +2275,22 @@
     <script src="js/photo-album-ui.js"></script>
     
     <!-- Random Flick IME -->
+    <script src="js/ime/ime-lexicon-data.js"></script>
+    <script src="js/ime/ime-anime-overrides.js"></script>
+    <script src="js/ime/ime-pos-transitions.js"></script>
+    <script src="js/ime/ime-inflections.js"></script>
+    <script src="js/ime/ime-local-grammar.js"></script>
+    <script src="js/ime/ime-custom-lexicon.js"></script>
+    <script src="js/ime/ime-lexicon.js"></script>
+    <script src="js/ime/ime-chat-overrides.js"></script>
     <script src="js/random-ime.js"></script>
+    <script src="js/ime/ime-custom-lexicon-ui.js"></script>
+    <script src="js/rolling-message-scheduler.js"></script>
+    <script src="js/translation/translation-config.js"></script>
+    <script src="js/translation-helper.js"></script>
+    <script src="js/translation/chrome-translator-provider.js"></script>
+    <script src="js/translation/deepl-remote-provider.js"></script>
+    <script src="js/translation/translation-provider-router.js"></script>
         
 </body>
 </html>

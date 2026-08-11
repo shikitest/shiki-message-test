@@ -1147,6 +1147,7 @@ window.toggleImmersiveMode = function(force) {
     function getBottom() { return parseInt(btn.style.bottom) || 100; }
     
     function onStart(e) {
+        if (isDragging) return;
         isDragging = true; hasMoved = false;
         btn.classList.add('dragging');
         var touch = e.touches ? e.touches[0] : e;
@@ -1154,6 +1155,14 @@ window.toggleImmersiveMode = function(force) {
         startY = touch.clientY;
         origRight = getRight();
         origBottom = getBottom();
+        if (e.type === 'touchstart') {
+            document.addEventListener('touchmove', onMove, {passive: false});
+            document.addEventListener('touchend', onEnd);
+            document.addEventListener('touchcancel', onEnd);
+        } else {
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onEnd);
+        }
         e.preventDefault();
     }
     function onMove(e) {
@@ -1173,6 +1182,11 @@ window.toggleImmersiveMode = function(force) {
     function onEnd(e) {
         if (!isDragging) return;
         isDragging = false;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onEnd);
+        document.removeEventListener('touchmove', onMove);
+        document.removeEventListener('touchend', onEnd);
+        document.removeEventListener('touchcancel', onEnd);
         btn.classList.remove('dragging');
         if (!hasMoved) {
             window.toggleImmersiveMode(false);
@@ -1180,10 +1194,6 @@ window.toggleImmersiveMode = function(force) {
     }
     btn.addEventListener('mousedown', onStart, {passive: false});
     btn.addEventListener('touchstart', onStart, {passive: false});
-    document.addEventListener('mousemove', onMove, {passive: false});
-    document.addEventListener('touchmove', onMove, {passive: false});
-    document.addEventListener('mouseup', onEnd);
-    document.addEventListener('touchend', onEnd);
     
     btn.removeAttribute('onclick');
 })();
@@ -1612,4 +1622,3 @@ window.tryShowDailyGreeting = function() {
         if (modal) modal.classList.remove('hidden');
     } catch(e) { console.warn('Daily greeting show error:', e); }
 };
-

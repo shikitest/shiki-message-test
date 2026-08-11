@@ -1,0 +1,6 @@
+tools/ime-source/*.gz
+tools/ime-source/*.xml
+worker/translation-proxy/.dev.vars
+worker/translation-proxy/.env
+worker/translation-proxy/.env.*
+!worker/translation-proxy/.env.example

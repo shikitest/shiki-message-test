@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shiki-message-translation-proxy",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-08-11",
+  "vars": {
+    "ALLOWED_ORIGINS": "https://shikikii.github.io,http://localhost:8000,http://127.0.0.1:8000",
+    "DEEPL_API_PLAN": "free",
+    "RATE_LIMIT_MAX": "30"
+  },
+  "secrets": {
+    "required": ["DEEPL_API_KEY"]
+  }
+}

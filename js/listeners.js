@@ -424,6 +424,20 @@ window.setReadReceiptStyle = function(style) {
     showNotification('已读回执样式已更新', 'success');
 };
 
+window.syncTextGenerationModeUI = function() {
+    const mode = ['card', 'ime', 'mixed'].includes(
+        settings.textGenerationMode
+    )
+        ? settings.textGenerationMode
+        : 'card';
+
+    document.querySelectorAll('[data-text-generation-mode]').forEach(option => {
+        const active = option.dataset.textGenerationMode === mode;
+        option.classList.toggle('active', active);
+        option.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+};
+
 const _chatSettingsEl = document.getElementById('chat-settings');
 if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
     hideModal(DOMElements.settingsModal.modal);
@@ -479,9 +493,9 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
     document.querySelectorAll('.time-fmt-opt').forEach(opt => {
         opt.classList.toggle('active', opt.dataset.fmt === (settings.timeFormat || 'HH:mm'));
     });
-    const autoToggle = document.getElementById('auto-send-toggle');
-    if (autoToggle) autoToggle.classList.toggle('active', !!settings.autoSendEnabled);
+    window.syncTextGenerationModeUI();
     updateAutoSendUI();
+    if (window.TranslationHelper) window.TranslationHelper.syncUI();
     updateDelayUI();
     const immToggle = document.getElementById('immersive-toggle');
     if (immToggle) immToggle.classList.toggle('active', document.body.classList.contains('immersive-mode'));
@@ -1184,6 +1198,27 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                 });
             });
 
+            document.querySelectorAll('[data-text-generation-mode]').forEach(option => {
+                option.addEventListener('click', () => {
+                    const requestedMode = option.dataset.textGenerationMode;
+                    const selectedMode = ['card', 'ime', 'mixed'].includes(
+                        requestedMode
+                    )
+                        ? requestedMode
+                        : 'card';
+                    settings.textGenerationMode = selectedMode;
+                    throttledSaveData();
+                    window.syncTextGenerationModeUI();
+                    const labels = {
+                        card: '字卡模式',
+                        ime: 'IME模式',
+                        mixed: '混合模式'
+                    };
+                    showNotification(`回复生成方式已切换为${labels[selectedMode]}`, 'success');
+                });
+            });
+            window.syncTextGenerationModeUI();
+
 
             const _appearanceEl = document.getElementById('appearance-settings');
             if (_appearanceEl) _appearanceEl.addEventListener('click', () => {
@@ -1254,41 +1289,37 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
                 });
             }
 
-const autoSendToggle = document.getElementById('auto-send-toggle');
-const autoSendControl = document.getElementById('auto-send-control');
-const autoSendSlider = document.getElementById('auto-send-slider');
-const autoSendValue = document.getElementById('auto-send-value');
-
 const updateAutoSendUI = () => {
-    autoSendToggle.classList.toggle('active', !!settings.autoSendEnabled);
-    autoSendControl.style.display = settings.autoSendEnabled ? "flex" : "none";
-    const currentVal = settings.autoSendInterval || 5;
-    autoSendSlider.value = currentVal;
-    autoSendValue.textContent = `${currentVal}分钟`;
+    const selected = settings.autoSendEnabled ?
+        (['low', 'normal', 'high'].includes(settings.autoSendFrequency) ?
+            settings.autoSendFrequency : 'normal') : 'off';
+    document.querySelectorAll('.auto-send-frequency-opt').forEach(button => {
+        const active = button.dataset.autoSendFrequency === selected;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-checked', String(active));
+    });
 };
 
 updateAutoSendUI();
 
-autoSendToggle.addEventListener('click', () => {
-    settings.autoSendEnabled = !settings.autoSendEnabled;
-    updateAutoSendUI();
-    manageAutoSendTimer(); 
-    throttledSaveData();
-    showNotification(`主动发送已${settings.autoSendEnabled ? '开启' : '关闭'}`, 'success');
-});
-
-autoSendSlider.value = settings.autoSendInterval || 5;
-autoSendValue.textContent = `${settings.autoSendInterval || 5}分钟`;
-
-autoSendSlider.addEventListener('input', (e) => {
-    const val = parseInt(e.target.value);
-    settings.autoSendInterval = val;
-    autoSendValue.textContent = `${val}分钟`;
-});
-
-autoSendSlider.addEventListener('change', () => {
-    manageAutoSendTimer(); 
-    throttledSaveData();
+document.querySelectorAll('.auto-send-frequency-opt').forEach(button => {
+    button.addEventListener('click', () => {
+        const frequency = button.dataset.autoSendFrequency;
+        settings.autoSendEnabled = frequency !== 'off';
+        if (settings.autoSendEnabled) {
+            settings.autoSendFrequency = ['low', 'normal', 'high'].includes(frequency) ?
+                frequency : 'normal';
+        }
+        updateAutoSendUI();
+        manageAutoSendTimer();
+        throttledSaveData();
+        showNotification(
+            settings.autoSendEnabled ?
+                `主动消息频率：${{ low: '低', normal: '普通', high: '高' }[settings.autoSendFrequency]}` :
+                '主动消息已关闭',
+            'success'
+        );
+    });
 });
 
             const resetBgBtn = document.getElementById('reset-default-bg');
@@ -2752,6 +2783,7 @@ const savedCover = safeGetItem(APP_PREFIX + 'playerCover');
         let isDragging = false, startX, startY, initialLeft, initialTop, hasMoved = false;
         const dragStart = (e) => {
             if (e.target.closest('.btn') || e.target.closest('.progress-wrapper') || e.target.closest('.playlist-popup')) return;
+            if (isDragging) return;
             const event = e.type === 'touchstart' ? e.touches[0] : e;
             isDragging = true; hasMoved = false;
             startX = event.clientX; startY = event.clientY;
@@ -2759,6 +2791,14 @@ const savedCover = safeGetItem(APP_PREFIX + 'playerCover');
             initialLeft = rect.left; initialTop = rect.top;
             player.style.transition = 'none';
             playlist.style.transition = 'none';
+            if (e.type === 'touchstart') {
+                document.addEventListener('touchmove', dragMove, { passive: false });
+                document.addEventListener('touchend', dragEnd);
+                document.addEventListener('touchcancel', dragEnd);
+            } else {
+                document.addEventListener('mousemove', dragMove);
+                document.addEventListener('mouseup', dragEnd);
+            }
         };
         const dragMove = (e) => {
             if (!isDragging) return;
@@ -2781,15 +2821,16 @@ playlist.style.top = (rect.top + (player.classList.contains('collapsed') ? 65 : 
         const dragEnd = () => {
             if (!isDragging) return;
             isDragging = false;
+            document.removeEventListener('mousemove', dragMove);
+            document.removeEventListener('mouseup', dragEnd);
+            document.removeEventListener('touchmove', dragMove);
+            document.removeEventListener('touchend', dragEnd);
+            document.removeEventListener('touchcancel', dragEnd);
             player.style.transition = '';
             playlist.style.transition = '';
         };
         player.addEventListener('mousedown', dragStart);
-        document.addEventListener('mousemove', dragMove);
-        document.addEventListener('mouseup', dragEnd);
         player.addEventListener('touchstart', dragStart, { passive: false });
-        document.addEventListener('touchmove', dragMove, { passive: false });
-        document.addEventListener('touchend', dragEnd);
 
         miniView.addEventListener('click', () => {
             if (!hasMoved && player.classList.contains('collapsed')) {
@@ -2865,12 +2906,18 @@ playlist.style.top = (rect.top + (player.classList.contains('collapsed') ? 65 : 
 
         function initCoreListeners() {
 
+            let historyScrollCheckPending = false;
             DOMElements.chatContainer.addEventListener('scroll', () => {
-                const container = DOMElements.chatContainer;
-                if (!container) return;
-                if (container.scrollTop < 50 && !isLoadingHistory && messages.length > displayedMessageCount) {
-                    if (typeof loadMoreHistory === 'function') loadMoreHistory();
-                }
+                if (historyScrollCheckPending) return;
+                historyScrollCheckPending = true;
+                requestAnimationFrame(() => {
+                    historyScrollCheckPending = false;
+                    const container = DOMElements.chatContainer;
+                    if (!container) return;
+                    if (container.scrollTop < 50 && !isLoadingHistory && messages.length > displayedMessageCount) {
+                        if (typeof loadMoreHistory === 'function') loadMoreHistory();
+                    }
+                });
             });
 
             DOMElements.sendBtn.addEventListener('click', () => isBatchMode ? addToBatch(): sendMessage());

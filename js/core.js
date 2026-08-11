@@ -88,50 +88,83 @@ function loadMoreHistory() {
     isLoadingHistory = true;
     if (historyLoader) historyLoader.style.display = 'flex';
 
-    const visibleWrappers = Array.from(container.querySelectorAll('.message-wrapper'));
-    const firstVisible = visibleWrappers.find(function(el) {
-        return el.offsetTop + el.offsetHeight >= container.scrollTop;
-    }) || visibleWrappers[0] || null;
-
-    const anchorId = firstVisible ? firstVisible.dataset.msgId : null;
-    const anchorTop = firstVisible ? firstVisible.getBoundingClientRect().top : 0;
-
-    const prevVisibility = container.style.visibility;
-    const prevOverflow = container.style.overflow;
     const prevScrollBehavior = container.style.scrollBehavior;
-    const prevOpacity = container.style.opacity;
-
-    container.style.opacity = '0.015';
-    container.style.visibility = 'hidden';
-    container.style.overflow = 'hidden';
     container.style.scrollBehavior = 'auto';
+    const firstExisting = container.querySelector('[data-render-message-id]');
+    const anchorTop = firstExisting ?
+        firstExisting.getBoundingClientRect().top : 0;
+    const newStartIndex = Math.max(
+        0,
+        currentOldestMsgIndex - HISTORY_BATCH_SIZE
+    );
+    const olderMessages = messages.slice(
+        newStartIndex,
+        currentOldestMsgIndex
+    );
 
-    setTimeout(() => {
-        displayedMessageCount = Math.min(messages.length, displayedMessageCount + HISTORY_BATCH_SIZE);
-        renderMessages(true);
+    try {
+        if (!firstExisting || olderMessages.length === 0) {
+            displayedMessageCount = Math.min(
+                messages.length,
+                displayedMessageCount + HISTORY_BATCH_SIZE
+            );
+            renderMessages(true);
+            return;
+        }
 
-        requestAnimationFrame(() => {
-            if (anchorId) {
-                const newAnchor = container.querySelector('[data-msg-id="' + anchorId + '"]');
-                if (newAnchor) {
-                    const newTop = newAnchor.getBoundingClientRect().top;
-                    container.scrollTop += (newTop - anchorTop);
-                }
-            }
-
-            requestAnimationFrame(() => {
-                container.style.opacity = prevOpacity || '';
-                container.style.visibility = prevVisibility || '';
-                container.style.overflow = prevOverflow || '';
-                container.style.scrollBehavior = prevScrollBehavior || '';
-
-                if (historyLoader) {
-                    historyLoader.style.display = (messages.length > displayedMessageCount) ? 'flex' : 'none';
-                }
-                isLoadingHistory = false;
-            });
+        const fragment = new DocumentFragment();
+        const lastSenderRef = { current: null };
+        olderMessages.forEach(function(msg, index) {
+            const absoluteIndex = newStartIndex + index;
+            const prevMsg = absoluteIndex > 0 ?
+                messages[absoluteIndex - 1] : null;
+            const nextMsg = messages[absoluteIndex + 1] || null;
+            fragment.appendChild(createMessageFragment(
+                msg,
+                prevMsg,
+                nextMsg,
+                lastSenderRef
+            ));
         });
-    }, 120);
+
+        const boundaryMessage = messages[currentOldestMsgIndex];
+        const boundaryNext = messages[currentOldestMsgIndex + 1] || null;
+        let replacementBoundary = null;
+        let boundaryFragment = null;
+        if (boundaryMessage) {
+            boundaryFragment = createMessageFragment(
+                boundaryMessage,
+                messages[currentOldestMsgIndex - 1] || null,
+                boundaryNext,
+                lastSenderRef
+            );
+            replacementBoundary = boundaryFragment.firstElementChild;
+        }
+
+        container.insertBefore(fragment, firstExisting);
+        if (replacementBoundary && boundaryFragment) {
+            const boundaryId = String(boundaryMessage.id);
+            const oldBoundaryNodes = Array.from(
+                container.querySelectorAll('[data-render-message-id]')
+            ).filter(function(node) {
+                return node.dataset.renderMessageId === boundaryId;
+            });
+            container.insertBefore(boundaryFragment, firstExisting);
+            oldBoundaryNodes.forEach(function(node) { node.remove(); });
+        }
+        displayedMessageCount = messages.length - newStartIndex;
+
+        const newAnchor = replacementBoundary || firstExisting;
+        const newTop = newAnchor.getBoundingClientRect().top;
+        container.scrollTop += (newTop - anchorTop);
+    } finally {
+        container.style.scrollBehavior = prevScrollBehavior || '';
+        if (historyLoader) {
+            historyLoader.style.display =
+                messages.length > displayedMessageCount ? 'flex' : 'none';
+        }
+        isLoadingHistory = false;
+    }
 }
 
 
@@ -157,6 +190,7 @@ function loadMoreHistory() {
                 musicPlayerEnabled: false,
                 replyDelayMin: 3000,
                 replyDelayMax: 7000,
+                textGenerationMode: 'card',
                 inChatAvatarEnabled: true,
                 inChatAvatarSize: 36,
                 inChatAvatarPosition: 'center',
@@ -171,6 +205,9 @@ function loadMoreHistory() {
                 partnerAvatarShape: 'circle',
 autoSendEnabled: false,
 autoSendInterval: 5,
+autoSendFrequency: 'normal',
+showPartnerMessageTranslation: false,
+showUserMessageTranslation: false,
         allowReadNoReply: false, 
         readNoReplyChance: 0.2,
         timeFormat: 'HH:mm',
@@ -335,6 +372,28 @@ const loadData = async () => {
 
         if (savedSettings) Object.assign(settings, savedSettings);
 
+        if (
+            savedSettings &&
+            !Object.prototype.hasOwnProperty.call(
+                savedSettings,
+                'autoSendFrequency'
+            )
+        ) {
+            const legacyInterval = Number(settings.autoSendInterval);
+            settings.autoSendFrequency = Number.isFinite(legacyInterval) ?
+                (legacyInterval <= 10 ? 'high' :
+                    legacyInterval <= 45 ? 'normal' : 'low') :
+                'normal';
+        } else if (!['low', 'normal', 'high'].includes(
+            settings.autoSendFrequency
+        )) {
+            settings.autoSendFrequency = 'normal';
+        }
+        settings.showPartnerMessageTranslation =
+            settings.showPartnerMessageTranslation === true;
+        settings.showUserMessageTranslation =
+            settings.showUserMessageTranslation === true;
+
         if (settings.showPartnerNameInChat !== undefined) {
             showPartnerNameInChat = settings.showPartnerNameInChat;
         } else if (savedShowNameConfig !== null) {
@@ -384,6 +443,10 @@ const loadData = async () => {
                 messages = [];
             }
         }
+
+        settings.textGenerationMode = normalizeTextGenerationMode(
+            settings.textGenerationMode
+        );
 
         if (savedBgGallery) {
             savedBackgrounds = savedBgGallery;
@@ -792,15 +855,47 @@ function manageAutoSendTimer() {
         clearInterval(autoSendTimer);
         autoSendTimer = null;
     }
-    if (settings.autoSendEnabled) {
-        const intervalMs = settings.autoSendInterval * 60 * 1000;
-        
-        autoSendTimer = setInterval(() => {
-            if (!document.body.classList.contains('batch-favorite-mode')) {
-                simulateReply(); 
-            }
-        }, intervalMs);
+    if (!window.RollingMessageScheduler) return;
+
+    if (!settings.autoSendEnabled) {
+        window.RollingMessageScheduler.stop({ clear: true });
+        return;
     }
+
+    const schedulerStorageKey = getStorageKey('rollingMessageScheduler');
+    window.RollingMessageScheduler.start({
+        frequency: settings.autoSendFrequency,
+        storage: localforage,
+        storageKey: schedulerStorageKey,
+        getIdentities: function() {
+            const groupEnabled =
+                typeof window.isGroupChatEnabled === 'function' &&
+                window.isGroupChatEnabled();
+            if (
+                groupEnabled &&
+                typeof window.getGroupChatMembers === 'function'
+            ) {
+                return window.getGroupChatMembers()
+                    .filter(member => member && member.id)
+                    .map(member => ({
+                        id: 'group:' + (SESSION_ID || 'default') + ':' + member.id,
+                        groupMemberId: member.id
+                    }));
+            }
+            return [{ id: 'partner:' + (SESSION_ID || 'default') }];
+        },
+        onTrigger: function(event) {
+            if (document.body.classList.contains('batch-favorite-mode')) {
+                return;
+            }
+            simulateReply({
+                source: 'rolling-scheduler',
+                groupMemberId: event.groupMemberId || null
+            });
+        }
+    }).catch(function(error) {
+        console.error('[RollingScheduler] 启动失败:', error);
+    });
 }
 
         const updateUI = () => {
@@ -877,6 +972,9 @@ function manageAutoSendTimer() {
             }
             const _immToggle = document.getElementById('immersive-toggle');
             if (_immToggle) _immToggle.classList.toggle('active', document.body.classList.contains('immersive-mode'));
+            if (typeof window.syncTextGenerationModeUI === 'function') {
+                window.syncTextGenerationModeUI();
+            }
 
             renderMessages();
         };
@@ -939,6 +1037,7 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
             day: 'numeric'
         });
         dateDivider.innerHTML = `<span>${displayDate}</span>`;
+        dateDivider.dataset.renderMessageId = String(msg.id);
         fragment.appendChild(dateDivider);
         lastSenderRef.current = null;
     }
@@ -946,6 +1045,7 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
     if (msg.type === 'system') {
         const systemMsgDiv = document.createElement('div');
         systemMsgDiv.className = 'system-message';
+        systemMsgDiv.dataset.renderMessageId = String(msg.id);
         systemMsgDiv.innerHTML = msg.text;
         fragment.appendChild(systemMsgDiv);
         lastSenderRef.current = 'system';
@@ -956,6 +1056,7 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
         const callEvDiv = document.createElement('div');
         callEvDiv.className = 'call-event-message';
         callEvDiv.dataset.id = msg.id;
+        callEvDiv.dataset.renderMessageId = String(msg.id);
         const icon = msg.callIcon || 'fa-video';
         const isRejected = icon === 'fa-phone-slash';
         const colorClass = isRejected ? 'call-event-pill--rejected' : 'call-event-pill--ended';
@@ -990,6 +1091,7 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
     wrapper.className = `message-wrapper ${msg.sender === 'user' ? 'sent' : 'received'}`;
     wrapper.dataset.id = msg.id;
     wrapper.dataset.msgId = msg.id;
+    wrapper.dataset.renderMessageId = String(msg.id);
 
     const avatarDiv = document.createElement('div');
     avatarDiv.className = 'message-avatar';
@@ -1089,6 +1191,21 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
     }
     messageDiv.innerHTML = messageHTML;
 
+    let translationDiv = null;
+    const translationEnabled = msg.sender === 'user' ?
+        settings.showUserMessageTranslation === true :
+        settings.showPartnerMessageTranslation === true;
+    if (
+        translationEnabled &&
+        msg.translationStatus === 'done' &&
+        msg.translationText
+    ) {
+        translationDiv = document.createElement('div');
+        translationDiv.className = 'message-translation-helper';
+        translationDiv.textContent = String(msg.translationText);
+        translationDiv.lang = msg.translationLanguage || '';
+    }
+
     let actionsHTML = '';
     if (settings.replyEnabled) actionsHTML += `<button class="meta-action-btn reply-btn" title="回复"><i class="fas fa-reply"></i></button>`;
     const starIcon = msg.favorited ? 'fas fa-star' : 'far fa-star';
@@ -1144,9 +1261,12 @@ function createMessageFragment(msg, prevMsg, nextMsg, lastSenderRef) {
             }
         }
         metaDiv.innerHTML = metaHTML;
-        contentWrapper.append(actionsDiv, messageDiv, metaDiv);
+        contentWrapper.append(actionsDiv, messageDiv);
+        if (translationDiv) contentWrapper.appendChild(translationDiv);
+        contentWrapper.appendChild(metaDiv);
     } else {
         contentWrapper.append(actionsDiv, messageDiv);
+        if (translationDiv) contentWrapper.appendChild(translationDiv);
     }
     wrapper.appendChild(contentWrapper);
     fragment.appendChild(wrapper);
@@ -1197,6 +1317,7 @@ function renderMessages(preserveScroll = false) {
     const fragment = new DocumentFragment();
     
     const spacer = document.createElement('div');
+    spacer.className = 'message-flex-spacer';
     spacer.style.flex = '1';
     fragment.appendChild(spacer);
 
@@ -1228,6 +1349,13 @@ const addMessage = (message) => {
 
     const prevMsg = messages.length > 0 ? messages[messages.length - 1] : null;
     messages.push(message);
+
+    if (
+        window.TranslationHelper &&
+        typeof window.TranslationHelper.requestForMessage === 'function'
+    ) {
+        window.TranslationHelper.requestForMessage(message);
+    }
     
     if (wasEmpty) {
         DOMElements.emptyState.style.display = 'none';
@@ -1643,7 +1771,97 @@ if (!isBatchMode && type === 'normal') {
             ro.observe(inputArea);
         })();
 
-        window.simulateReply = function() {
+        function normalizeTextGenerationMode(mode) {
+            return ['card', 'ime', 'mixed'].includes(mode)
+                ? mode
+                : 'card';
+        }
+
+        function chooseReplyText(replyPool) {
+            const mode = normalizeTextGenerationMode(
+                settings.textGenerationMode
+            );
+            const selectedSource = mode === 'mixed'
+                ? (Math.random() < 0.5 ? 'card' : 'ime')
+                : mode;
+
+            function generateIMEText() {
+                if (
+                    !window.RandomIME ||
+                    typeof window.RandomIME.generate !== 'function'
+                ) {
+                    return '';
+                }
+
+                // RandomIME deliberately receives no message, history,
+                // sender, context, or user-text input.
+                const result = window.RandomIME.generate();
+                return result && result.text
+                    ? String(result.text).trim()
+                    : '';
+            }
+
+            if (selectedSource === 'ime') {
+                const generatedText = generateIMEText();
+                if (generatedText) {
+                    return {
+                        text: generatedText,
+                        source: 'ime'
+                    };
+                }
+            }
+
+            const pool = Array.isArray(replyPool) ? replyPool : [];
+            for (let attempt = 0; attempt < 6; attempt++) {
+                const picked = pool[
+                    Math.floor(Math.random() * pool.length)
+                ];
+                if (picked && String(picked).trim()) {
+                    return {
+                        text: String(picked).trim(),
+                        source: 'card'
+                    };
+                }
+            }
+
+            if (mode === 'mixed' && selectedSource === 'card') {
+                const generatedText = generateIMEText();
+                if (generatedText) {
+                    return {
+                        text: generatedText,
+                        source: 'ime'
+                    };
+                }
+            }
+
+            return {
+                text: '',
+                source: selectedSource
+            };
+        }
+
+        window.chooseReplyText = chooseReplyText;
+        window.setTextGenerationMode = function(mode) {
+            const normalized = normalizeTextGenerationMode(mode);
+            settings.textGenerationMode = normalized;
+            throttledSaveData();
+            return normalized;
+        };
+        window.getTextGenerationMode = function() {
+            return normalizeTextGenerationMode(
+                settings.textGenerationMode
+            );
+        };
+
+        window.simulateReply = function(triggerOptions) {
+            const replyTrigger = triggerOptions &&
+                typeof triggerOptions === 'object' ? triggerOptions : {};
+            const scheduledGroupMember =
+                replyTrigger.groupMemberId &&
+                typeof window.getGroupMemberById === 'function' ?
+                    window.getGroupMemberById(
+                        replyTrigger.groupMemberId
+                    ) : null;
             function showTypingIndicator() {
                 if (!settings.typingIndicatorEnabled) return;
                 const tiWrapper = document.getElementById('typing-indicator-wrapper');
@@ -1719,8 +1937,9 @@ if (
     typeof window.getGroupChatMembers === "function"
 ) {
 
-    const groupMembers =
-        window.getGroupChatMembers();
+        const groupMembers = scheduledGroupMember ?
+            [scheduledGroupMember] :
+            window.getGroupChatMembers();
 
 
     if (
@@ -1972,7 +2191,13 @@ else {
 // ============================================================     
                 
             const replyCount = Math.random() < 0.75 ? 1: (Math.random() < 0.95 ? 2: 3);
-            if (!customReplies || customReplies.length === 0) {
+            const textGenerationMode = normalizeTextGenerationMode(
+                settings.textGenerationMode
+            );
+            if (
+                textGenerationMode === 'card' &&
+                (!customReplies || customReplies.length === 0)
+            ) {
                 showNotification('回复库为空，请先到「自定义回复」中添加内容', 'info', 3500);
                 return;
             }
@@ -1986,11 +2211,16 @@ else {
             (window.customReplyGroups || []).forEach(g => {
                 if (g.disabled && Array.isArray(g.items)) g.items.forEach(item => disabledGroupItemsOnce.add(item));
             });
-            const replyPoolOnce = customReplies
+            const replyPoolOnce = (Array.isArray(customReplies)
+                ? customReplies
+                : [])
                 .filter(r => !disabledItemsOnce.has(r) && !disabledGroupItemsOnce.has(r))
                 .map(r => String(r || '').trim())
                 .filter(Boolean);
-            if (!replyPoolOnce.length) {
+            if (
+                textGenerationMode === 'card' &&
+                !replyPoolOnce.length
+            ) {
                 showNotification('回复库可用内容为空（可能被分组禁用或屏蔽），请到「自定义回复」中调整', 'info', 4000);
                 return;
             }
@@ -2007,15 +2237,8 @@ else {
                 setTimeout(() => {
                     try {
                     const replyPool = replyPoolOnce;
-                    // 被屏蔽或无效项直接换下一个，尽量保证每次都产出可用回复
-                    let replyText = '';
-                    for (let t = 0; t < 6; t++) {
-                        const picked = replyPool[Math.floor(Math.random() * replyPool.length)];
-                        if (picked && String(picked).trim()) {
-                            replyText = String(picked).trim();
-                            break;
-                        }
-                    }
+                    const replyChoice = chooseReplyText(replyPool);
+                    const replyText = replyChoice.text;
                     if (!replyText && i === replyCount - 1) {
                         (function(){try{if(window._typingIndicatorAutoHideTimer){clearTimeout(window._typingIndicatorAutoHideTimer);window._typingIndicatorAutoHideTimer=null;}}catch(e){}var _tiW=document.getElementById('typing-indicator-wrapper');if(_tiW){var _tiInner=_tiW.querySelector('.typing-indicator');if(_tiInner){_tiInner.classList.add('hiding');setTimeout(function(){_tiW.style.display='none';if(_tiInner)_tiInner.classList.remove('hiding');},240);}else{_tiW.style.display='none';}}})();
                         return;
@@ -2042,9 +2265,15 @@ else {
                         }
                     }
 
+                    const replySender = scheduledGroupMember ?
+                        (scheduledGroupMember.name || settings.partnerName || '对方') :
+                        (settings.partnerName || '对方');
+                    const replyGroupMemberId = scheduledGroupMember ?
+                        scheduledGroupMember.id : null;
+
                     addMessage({
                         id: Date.now() + i,
-                        sender: settings.partnerName || '对方',
+                        sender: replySender,
                         text: finalText,
                         timestamp: new Date(),
                         status: 'received',
@@ -2053,7 +2282,8 @@ else {
                         replyTo: (i === 0 && recentUserMsgs.length > 0 && Math.random() < 0.3)
                             ? (function(){ const m = recentUserMsgs[Math.floor(Math.random() * recentUserMsgs.length)]; return { id: m.id, text: m.text, sender: m.sender }; })()
                             : null,
-                        type: 'normal'
+                        type: 'normal',
+                        groupMemberId: replyGroupMemberId
                     });
                     if (typeof window._sendPartnerNotification === 'function') {
                         window._sendPartnerNotification(settings.partnerName || '对方', finalText);
@@ -2065,14 +2295,15 @@ else {
                         setTimeout(() => {
                             addMessage({
                                 id: Date.now() + i + 2000,
-                                sender: settings.partnerName || '对方',
+                                sender: replySender,
                                 text: '',
                                 timestamp: new Date(),
                                 image: randomSticker,
                                 status: 'received',
                                 favorited: false,
                                 note: null,
-                                type: 'normal'
+                                type: 'normal',
+                                groupMemberId: replyGroupMemberId
                             });
                             playSound('message');
                             if (typeof window._sendPartnerNotification === 'function') {
@@ -2085,13 +2316,14 @@ else {
                         setTimeout(() => {
                             addMessage({
                                 id: Date.now() + i + 1000,
-                                sender: settings.partnerName || '对方',
+                                sender: replySender,
                                 text: separateEmoji,
                                 timestamp: new Date(),
                                 status: 'received',
                                 favorited: false,
                                 note: null,
-                                type: 'normal'
+                                type: 'normal',
+                                groupMemberId: replyGroupMemberId
                             });
                             playSound('message');
                         }, 300 + Math.random() * 400);
@@ -2912,6 +3144,9 @@ function showModal(modalElement, focusElement = null) {
                         if (doSettings) {
                             if (importedData.settings) {
                                 Object.assign(settings, importedData.settings);
+                                settings.textGenerationMode = normalizeTextGenerationMode(
+                                    settings.textGenerationMode
+                                );
                                 try {
                                     if (settings.customFontUrl) applyCustomFont(settings.customFontUrl);
                                     if (settings.customBubbleCss) applyCustomBubbleCss(settings.customBubbleCss);
@@ -3062,24 +3297,3 @@ window.initializeSession = async function() {
 
     await localforage.setItem(`${APP_PREFIX}lastSessionId`, SESSION_ID);
 }
-
-document.addEventListener('DOMContentLoaded', function() {
-    const chatArea = document.querySelector('.main-chat-area');
-    const historyLoader = document.getElementById('history-loader');
-    
-    if (chatArea && historyLoader && typeof IntersectionObserver !== 'undefined') {
-        const observer = new IntersectionObserver((entries) => {
-            if (entries[0].isIntersecting && messages.length > displayedMessageCount) {
-                loadMoreHistory();
-            }
-        }, {
-            root: chatArea,
-            rootMargin: '200px 0px 0px 0px',
-            threshold: 0.01
-        });
-        observer.observe(historyLoader);
-    }
-});
-
-
-
