@@ -55,8 +55,8 @@
         }
     }
 
-    function snapshot(state, extra) {
-        const value = Object.assign({
+    function createSnapshot(state, extra) {
+        return Object.assign({
             provider: PROVIDER_ID,
             state,
             mode: "remote",
@@ -64,10 +64,6 @@
             configured: Boolean(configuredUrl()),
             updatedAt: Date.now()
         }, extra || {});
-        listeners.forEach(function (listener) {
-            try { listener(value); } catch (error) {}
-        });
-        return value;
     }
 
     async function status(sourceLanguage, targetLanguage) {
@@ -76,7 +72,7 @@
             targetLanguage || "zh"
         );
         if (!allowedPair(options)) {
-            return snapshot("unavailable", {
+            return createSnapshot("unavailable", {
                 supported: false,
                 reason: "language-pair-not-allowed",
                 sourceLanguage: options.sourceLanguage,
@@ -84,14 +80,14 @@
             });
         }
         if (!configuredUrl()) {
-            return snapshot("unconfigured", {
+            return createSnapshot("unconfigured", {
                 supported: false,
                 reason: proxyUrl() ? "invalid-proxy-url" : "proxy-url-missing",
                 sourceLanguage: options.sourceLanguage,
                 targetLanguage: options.targetLanguage
             });
         }
-        return snapshot("available", {
+        return createSnapshot("available", {
             sourceLanguage: options.sourceLanguage,
             targetLanguage: options.targetLanguage
         });

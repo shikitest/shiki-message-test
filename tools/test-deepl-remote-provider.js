@@ -68,6 +68,12 @@ async function expectCode(provider, call, code) {
 
 async function main() {
     const ok = load();
+    let statusEvents = 0;
+    ok.provider.subscribe(function () { statusEvents++; });
+    await ok.provider.status("ja", "zh");
+    await ok.provider.status("ja", "zh");
+    assert(statusEvents === 0,
+        "status queries must not emit provider events");
     assert(await ok.provider.translate("眠い", "ja", "zh") === "translated",
         "ja to zh failed");
     assert(ok.calls[0].body.sourceLanguage === "ja" &&
@@ -156,7 +162,8 @@ async function main() {
             illegalPair: true,
             unconfigured: true,
             cache: true,
-            privacyPayload: true
+            privacyPayload: true,
+            statusQueryEvents: statusEvents
         }
     }, null, 2));
 }

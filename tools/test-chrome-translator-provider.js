@@ -35,7 +35,8 @@ function loadProvider(options) {
     vm.createContext(context);
     vm.runInContext(SOURCE, context);
     return {
-        provider: registered.provider,
+        provider: window.ChromeTranslatorProvider,
+        registeredProvider: registered.provider,
         window
     };
 }
@@ -65,7 +66,16 @@ async function main() {
         }
     });
     const available = availableRuntime.provider;
-    assert(available, "provider was not registered");
+    assert(available, "child provider was not exported");
+    assert(availableRuntime.registeredProvider === null,
+        "Chrome child provider must not register as the public provider");
+    const statusEvents = [];
+    available.subscribe(event => statusEvents.push(event));
+    await available.status("ja", "zh");
+    await available.status("ja", "zh");
+    assert(statusEvents.length === 0,
+        "status queries must not emit provider events");
+    const statusQueryEvents = statusEvents.length;
     assert(available.normalizeLanguage("zh-CN") === "zh",
         "zh-CN must normalize to Chrome's supported zh code");
     assert(available.normalizeLanguage("ja-JP") === "ja",
@@ -210,7 +220,8 @@ async function main() {
             state: event.state,
             progress: event.progress,
             reason: event.reason || null
-        }))
+        })),
+        statusQueryEvents
     }, null, 2));
 }
 

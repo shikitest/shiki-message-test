@@ -6,7 +6,8 @@
     let provider = null;
     let providerUnsubscribe = null;
     let lazyQueue = Promise.resolve();
-    let statusRefreshToken = 0;
+    let statusRefreshPromise = null;
+    let statusRefreshProvider = null;
     let refreshTimer = null;
     const lazyPending = new WeakSet();
 
@@ -157,23 +158,15 @@
         };
     }
 
-    async function refreshProviderStatusUI() {
+    function updateProviderStatusUI(status) {
         const element = document.getElementById(
             "translation-provider-status"
         );
         if (!element) return null;
-        const token = ++statusRefreshToken;
-        let status;
-        try {
-            status = await providerStatus("ja", "zh");
-        } catch (error) {
-            status = {
-                state: "unavailable",
-                supported: false,
-                error: error && error.message
-            };
-        }
-        if (token !== statusRefreshToken) return status;
+        status = status || {
+            state: "unconfigured",
+            supported: false
+        };
         const localLabels = {
             available: "当前使用本地翻译",
             downloadable: "首次使用需下载本地翻译模型",
@@ -198,6 +191,33 @@
         return status;
     }
 
+    function refreshProviderStatusUI() {
+        const currentProvider = provider;
+        if (
+            statusRefreshPromise &&
+            statusRefreshProvider === currentProvider
+        ) return statusRefreshPromise;
+        const refreshPromise = Promise.resolve(
+            providerStatus("ja", "zh")
+        ).catch(function (error) {
+            return {
+                state: "unavailable",
+                supported: false,
+                error: error && error.message
+            };
+        }).then(function (status) {
+            return updateProviderStatusUI(status);
+        }).finally(function () {
+            if (statusRefreshPromise === refreshPromise) {
+                statusRefreshPromise = null;
+                statusRefreshProvider = null;
+            }
+        });
+        statusRefreshProvider = currentProvider;
+        statusRefreshPromise = refreshPromise;
+        return refreshPromise;
+    }
+
     function setProvider(nextProvider) {
         if (
             nextProvider !== null &&
@@ -211,8 +231,8 @@
         }
         provider = nextProvider;
         if (provider && typeof provider.subscribe === "function") {
-            providerUnsubscribe = provider.subscribe(function () {
-                refreshProviderStatusUI();
+            providerUnsubscribe = provider.subscribe(function (snapshot) {
+                updateProviderStatusUI(snapshot);
             });
         }
         refreshProviderStatusUI();

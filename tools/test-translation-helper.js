@@ -128,16 +128,38 @@ async function main() {
     assert(messages[2].text === "旧消息",
         "old messages without translation fields must load without changing original text");
 
+    let statusCalls = 0;
+    let statusListener = null;
     provider.set({
         id: "unsupported-provider",
         async status() {
+            statusCalls++;
             return { state: "unavailable", supported: false };
+        },
+        subscribe(listener) {
+            statusListener = listener;
+            return function () { statusListener = null; };
         },
         async translate() { return ""; }
     });
-    await helper.refreshProviderStatusUI();
+    await Promise.all([
+        helper.refreshProviderStatusUI(),
+        helper.refreshProviderStatusUI(),
+        helper.refreshProviderStatusUI()
+    ]);
+    assert(statusCalls === 1,
+        "concurrent status refreshes must share one in-flight query");
     assert(providerStatusElement.dataset.translationProviderState ===
         "unavailable", "unsupported browser hint failed");
+    statusListener({
+        state: "available",
+        supported: true,
+        mode: "local"
+    });
+    assert(statusCalls === 1,
+        "provider subscriber must consume its snapshot without querying status");
+    assert(providerStatusElement.dataset.translationProviderState ===
+        "available", "provider event snapshot did not update the UI");
 
     let failureCalls = 0;
     const lazyMessages = Array.from({ length: 20 }, function (_, index) {
@@ -195,6 +217,7 @@ async function main() {
             failurePreservesOriginal: true,
             lazyHistoryLimit: helper.maxLazyHistory,
             unavailableStatusHint: true,
+            inFlightStatusCalls: statusCalls,
             status: messages.slice(0, 2).map(message => ({
                 id: message.id,
                 translationStatus: message.translationStatus,

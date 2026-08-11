@@ -7,6 +7,7 @@
     const remote = window.DeepLRemoteTranslationProvider || null;
     const listeners = new Set();
     const unsubscribers = [];
+    const emittedStates = new Map();
     const LOCAL_STATES = new Set([
         "available",
         "downloadable",
@@ -14,7 +15,28 @@
         "activation-required"
     ]);
 
+    function statusKey(status) {
+        return String(status && status.sourceLanguage || "ja") + "\u0000" +
+            String(status && status.targetLanguage || "zh");
+    }
+
+    function sameStatus(previous, next) {
+        if (!previous || !next) return false;
+        const keys = [
+            "provider", "activeProvider", "mode", "state", "supported",
+            "configured", "progress", "availability", "reason",
+            "sourceLanguage", "targetLanguage", "error"
+        ];
+        return keys.every(function (key) {
+            return previous[key] === next[key];
+        });
+    }
+
     function emit(status) {
+        const key = statusKey(status);
+        const previous = emittedStates.get(key);
+        if (sameStatus(previous, status)) return previous;
+        emittedStates.set(key, status);
         listeners.forEach(function (listener) {
             try { listener(status); } catch (error) {}
         });
@@ -62,7 +84,7 @@
     }
 
     async function status(sourceLanguage, targetLanguage) {
-        return emit((await resolve(sourceLanguage, targetLanguage)).status);
+        return (await resolve(sourceLanguage, targetLanguage)).status;
     }
 
     async function translate(text, sourceLanguage, targetLanguage) {
@@ -93,11 +115,24 @@
     [local, remote].forEach(function (provider) {
         if (provider && typeof provider.subscribe === "function") {
             unsubscribers.push(provider.subscribe(function (event) {
-                emit(Object.assign({}, event, {
-                    provider: PROVIDER_ID,
-                    activeProvider: provider.id,
-                    mode: provider === local ? "local" : "remote"
-                }));
+                if (
+                    provider === local &&
+                    event &&
+                    LOCAL_STATES.has(event.state)
+                ) {
+                    emit(Object.assign({}, event, {
+                        provider: PROVIDER_ID,
+                        activeProvider: local.id,
+                        mode: "local"
+                    }));
+                    return;
+                }
+                resolve(
+                    event && event.sourceLanguage,
+                    event && event.targetLanguage
+                ).then(function (route) {
+                    emit(route.status);
+                }).catch(function () {});
             }));
         }
     });

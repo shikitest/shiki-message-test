@@ -39,8 +39,8 @@
         );
     }
 
-    function emit(options, state, extra) {
-        const snapshot = Object.assign({
+    function createSnapshot(options, state, extra) {
+        return Object.assign({
             provider: PROVIDER_ID,
             pair: pairKey(options),
             sourceLanguage: options.sourceLanguage,
@@ -50,7 +50,26 @@
             progress: null,
             updatedAt: Date.now()
         }, extra || {});
-        pairStates.set(pairKey(options), snapshot);
+    }
+
+    function sameSnapshot(previous, next) {
+        if (!previous || !next) return false;
+        const keys = [
+            "provider", "pair", "sourceLanguage", "targetLanguage",
+            "state", "supported", "progress", "availability", "reason",
+            "userActivation", "error"
+        ];
+        return keys.every(function (key) {
+            return previous[key] === next[key];
+        });
+    }
+
+    function emit(options, state, extra) {
+        const key = pairKey(options);
+        const snapshot = createSnapshot(options, state, extra);
+        const previous = pairStates.get(key);
+        if (sameSnapshot(previous, snapshot)) return previous;
+        pairStates.set(key, snapshot);
         listeners.forEach(function (listener) {
             try { listener(snapshot); } catch (error) {}
         });
@@ -64,7 +83,7 @@
         );
         const api = translatorAPI();
         if (window.isSecureContext === false) {
-            return emit(options, "unavailable", {
+            return createSnapshot(options, "unavailable", {
                 supported: false,
                 reason: "insecure-context"
             });
@@ -74,7 +93,7 @@
             typeof api.availability !== "function" ||
             typeof api.create !== "function"
         ) {
-            return emit(options, "unavailable", {
+            return createSnapshot(options, "unavailable", {
                 supported: false,
                 reason: "translator-api-missing"
             });
@@ -88,14 +107,14 @@
                 "downloading",
                 "unavailable"
             ].includes(availability) ? availability : "unavailable";
-            return emit(options, state, {
+            return createSnapshot(options, state, {
                 supported: state !== "unavailable",
                 availability: availability || null,
                 reason: availability ? null : "availability-unknown",
                 userActivation: userActivationActive()
             });
         } catch (error) {
-            return emit(options, "unavailable", {
+            return createSnapshot(options, "unavailable", {
                 supported: false,
                 reason: "availability-failed",
                 error: error && error.message ? error.message : String(error)
@@ -180,15 +199,9 @@
             return await promise;
         } catch (error) {
             if (
-                error &&
-                error.code === "TRANSLATION_USER_ACTIVATION_REQUIRED"
+                !error ||
+                error.code !== "TRANSLATION_USER_ACTIVATION_REQUIRED"
             ) {
-                emit(options, "activation-required", {
-                    supported: true,
-                    reason: "user-activation-required",
-                    error: error.message
-                });
-            } else {
                 emit(options, "unavailable", {
                     supported: false,
                     reason: error && error.code || "create-failed",
@@ -251,10 +264,4 @@
     });
 
     window.ChromeTranslatorProvider = provider;
-    if (
-        window.TranslationProvider &&
-        typeof window.TranslationProvider.set === "function"
-    ) {
-        window.TranslationProvider.set(provider);
-    }
 })();
