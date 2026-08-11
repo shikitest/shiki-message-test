@@ -46,7 +46,10 @@ function load(options = {}) {
         console,
         fetch,
         URL,
-        AbortController,
+        AbortController: Object.prototype.hasOwnProperty.call(
+            options,
+            "AbortController"
+        ) ? options.AbortController : AbortController,
         Map,
         Set,
         Date,
@@ -87,6 +90,17 @@ async function main() {
     assert(Object.keys(ok.calls[1].body).sort().join(",") ===
         "sourceLanguage,targetLanguage,text",
         "remote payload leaked extra fields");
+
+    const withoutAbortController = load({ AbortController: undefined });
+    assert(await withoutAbortController.provider.translate(
+        "mobile-ja", "ja", "zh"
+    ) === "translated", "missing AbortController blocked translation");
+    assert(withoutAbortController.calls.length === 1,
+        "missing AbortController must still call fetch once");
+    assert(!Object.prototype.hasOwnProperty.call(
+        withoutAbortController.calls[0].request,
+        "signal"
+    ), "missing AbortController must omit the fetch signal");
 
     const cacheCalls = ok.calls.length;
     await ok.provider.translate("我好困", "zh", "ja");
@@ -163,6 +177,7 @@ async function main() {
             unconfigured: true,
             cache: true,
             privacyPayload: true,
+            abortControllerFallback: true,
             statusQueryEvents: statusEvents
         }
     }, null, 2));

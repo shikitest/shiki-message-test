@@ -975,6 +975,12 @@ function manageAutoSendTimer() {
             if (typeof window.syncTextGenerationModeUI === 'function') {
                 window.syncTextGenerationModeUI();
             }
+            if (
+                window.TranslationHelper &&
+                typeof window.TranslationHelper.syncUI === 'function'
+            ) {
+                window.TranslationHelper.syncUI();
+            }
 
             renderMessages();
         };

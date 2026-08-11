@@ -51,6 +51,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         updateLoader('正在读取记忆存档...', '40%');
 await safeAwait(loadData());
+        if (
+            window.TranslationHelper &&
+            typeof window.TranslationHelper.syncUI === 'function'
+        ) {
+            window.TranslationHelper.syncUI();
+        }
 
 
 // ============================================================
@@ -323,6 +329,21 @@ updateLoader('正在渲染我们的世界...', '70%');
                 } catch (e) {
                     console.warn('[visibilitychange] 恢复备份失败:', e);
                 }
+                if (
+                    window.TranslationHelper &&
+                    typeof window.TranslationHelper.syncUI === 'function'
+                ) {
+                    window.TranslationHelper.syncUI();
+                }
+            }
+        });
+
+        window.addEventListener('pageshow', () => {
+            if (
+                window.TranslationHelper &&
+                typeof window.TranslationHelper.syncUI === 'function'
+            ) {
+                window.TranslationHelper.syncUI();
             }
         });
 

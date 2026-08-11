@@ -75,6 +75,11 @@ async function main() {
         }
     };
     vm.createContext(context);
+    vm.runInContext("Promise.prototype.finally = undefined;", context);
+    assert(vm.runInContext(
+        "typeof Promise.prototype.finally",
+        context
+    ) === "undefined", "legacy Safari Promise.finally simulation failed");
     vm.runInContext(source, context);
     const helper = context.window.TranslationHelper;
     const provider = context.window.TranslationProvider;
@@ -202,6 +207,8 @@ async function main() {
         "message.text must never be replaced with translation");
     assert(!groupSource.includes("translationText"),
         "search and word cloud paths must not consume translationText");
+    assert(coreSource.includes("window.TranslationHelper.syncUI();"),
+        "global UI refresh must synchronize translation toggles");
 
     console.log(JSON.stringify({
         switches: {
@@ -233,6 +240,10 @@ async function main() {
             originalMessageFieldUnchanged: true,
             searchAndWordCloudIgnoreTranslation: true,
             providerConfiguredOnlyByExplicitRegistration: true
+        },
+        compatibility: {
+            promiseFinallyUnavailable: true,
+            translationFlowCompleted: true
         },
         saves,
         renders

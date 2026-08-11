@@ -11,6 +11,27 @@
     let refreshTimer = null;
     const lazyPending = new WeakSet();
 
+    function debugEnabled() {
+        try {
+            return Boolean(
+                window.TranslationConfig &&
+                window.TranslationConfig.debug === true
+            ) || window.localStorage.getItem("translationDebug") === "true";
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function debugLog(message) {
+        if (
+            debugEnabled() &&
+            window.console &&
+            typeof console.debug === "function"
+        ) {
+            console.debug("[Translation] " + message);
+        }
+    }
+
     function enabledFor(message) {
         if (!message || !message.text || message.type === "system") return false;
         return message.sender === "user" ?
@@ -55,7 +76,10 @@
     }
 
     async function requestForMessage(message, fromLazyQueue) {
-        if (!enabledFor(message)) return null;
+        if (!enabledFor(message)) {
+            debugLog("translation skipped: disabled");
+            return null;
+        }
         if (
             message.translationStatus === "done" &&
             message.translationText
@@ -197,22 +221,26 @@
             statusRefreshPromise &&
             statusRefreshProvider === currentProvider
         ) return statusRefreshPromise;
-        const refreshPromise = Promise.resolve(
-            providerStatus("ja", "zh")
-        ).catch(function (error) {
-            return {
-                state: "unavailable",
-                supported: false,
-                error: error && error.message
-            };
-        }).then(function (status) {
-            return updateProviderStatusUI(status);
-        }).finally(function () {
-            if (statusRefreshPromise === refreshPromise) {
-                statusRefreshPromise = null;
-                statusRefreshProvider = null;
+        const refreshPromise = (async function () {
+            try {
+                let status;
+                try {
+                    status = await providerStatus("ja", "zh");
+                } catch (error) {
+                    status = {
+                        state: "unavailable",
+                        supported: false,
+                        error: error && error.message
+                    };
+                }
+                return updateProviderStatusUI(status);
+            } finally {
+                if (statusRefreshPromise === refreshPromise) {
+                    statusRefreshPromise = null;
+                    statusRefreshProvider = null;
+                }
             }
-        });
+        })();
         statusRefreshProvider = currentProvider;
         statusRefreshPromise = refreshPromise;
         return refreshPromise;

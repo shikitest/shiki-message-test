@@ -15,6 +15,27 @@
         "activation-required"
     ]);
 
+    function debugEnabled() {
+        try {
+            return Boolean(
+                window.TranslationConfig &&
+                window.TranslationConfig.debug === true
+            ) || window.localStorage.getItem("translationDebug") === "true";
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function debugLog(message) {
+        if (
+            debugEnabled() &&
+            window.console &&
+            typeof console.debug === "function"
+        ) {
+            console.debug("[Translation] " + message);
+        }
+    }
+
     function statusKey(status) {
         return String(status && status.sourceLanguage || "ja") + "\u0000" +
             String(status && status.targetLanguage || "zh");
@@ -99,6 +120,10 @@
                 "TRANSLATION_UNAVAILABLE";
             throw error;
         }
+        debugLog(
+            "translation route: " +
+            (route.status && route.status.mode || "unknown")
+        );
         return route.provider.translate(
             text,
             sourceLanguage,

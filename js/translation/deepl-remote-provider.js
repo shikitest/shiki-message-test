@@ -10,6 +10,29 @@
     const cache = new Map();
     const listeners = new Set();
 
+    function debugEnabled() {
+        try {
+            return Boolean(
+                window.TranslationConfig &&
+                window.TranslationConfig.debug === true
+            ) || window.localStorage.getItem("translationDebug") === "true";
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function debugLog(message, code) {
+        if (
+            !debugEnabled() ||
+            !window.console ||
+            typeof console.debug !== "function"
+        ) return;
+        console.debug(
+            "[Translation] " + message +
+            (code ? ": " + String(code) : "")
+        );
+    }
+
     function normalizeLanguage(language) {
         const lower = String(language || "").trim().toLowerCase();
         if (["zh", "zh-cn", "zh-hans"].includes(lower)) return "zh";
@@ -157,63 +180,79 @@
         const cached = readCache(key);
         if (cached !== null) return cached;
 
-        const controller = new AbortController();
-        const timeout = setTimeout(function () {
-            controller.abort();
-        }, REQUEST_TIMEOUT_MS);
         let response;
+        let controller = null;
+        let timeout = null;
         try {
-            response = await fetch(endpoint, {
+            if (typeof AbortController === "function") {
+                controller = new AbortController();
+                timeout = setTimeout(function () {
+                    controller.abort();
+                }, REQUEST_TIMEOUT_MS);
+            }
+            const requestOptions = {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     text: input,
                     sourceLanguage: options.sourceLanguage,
                     targetLanguage: options.targetLanguage
-                }),
-                signal: controller.signal
-            });
+                })
+            };
+            if (controller) requestOptions.signal = controller.signal;
+            debugLog("translation fetch started");
+            response = await fetch(endpoint, requestOptions);
         } catch (error) {
             if (error && error.name === "AbortError") {
-                throw providerError(
+                const timeoutError = providerError(
                     "Online translation timed out",
                     "TRANSLATION_TIMEOUT"
                 );
+                debugLog("translation fetch failed", timeoutError.code);
+                throw timeoutError;
             }
-            throw providerError(
+            const networkError = providerError(
                 "Online translation is unavailable",
                 "TRANSLATION_NETWORK_ERROR"
             );
+            debugLog("translation fetch failed", networkError.code);
+            throw networkError;
         } finally {
-            clearTimeout(timeout);
+            if (timeout !== null) clearTimeout(timeout);
         }
 
         let payload = null;
         try {
             payload = await response.json();
         } catch (error) {
-            throw providerError(
+            const responseError = providerError(
                 "Online translation returned invalid JSON",
                 "TRANSLATION_INVALID_RESPONSE",
                 response.status
             );
+            debugLog("translation fetch failed", responseError.code);
+            throw responseError;
         }
         if (!response.ok) {
             const code = payload && payload.error && payload.error.code;
-            throw providerError(
+            const remoteError = providerError(
                 payload && payload.error && payload.error.message ||
                     "Online translation failed",
                 code || (response.status === 429 ?
                     "TRANSLATION_RATE_LIMITED" : "TRANSLATION_REMOTE_ERROR"),
                 response.status
             );
+            debugLog("translation fetch failed", remoteError.code);
+            throw remoteError;
         }
         if (!payload || typeof payload.text !== "string" || !payload.text.trim()) {
-            throw providerError(
+            const resultError = providerError(
                 "Online translation returned an invalid result",
                 "TRANSLATION_INVALID_RESPONSE",
                 response.status
             );
+            debugLog("translation fetch failed", resultError.code);
+            throw resultError;
         }
         const translated = payload.text.trim();
         writeCache(key, translated);
