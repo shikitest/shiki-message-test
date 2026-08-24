@@ -163,8 +163,17 @@ async function main() {
     ), "utf8");
     const listeners = fs.readFileSync(path.join(root, "js", "listeners.js"),
         "utf8");
-    assert(/id="local-music-input"[^>]*accept="audio\/\*"/.test(html),
-        "mobile audio file input is missing");
+    const localMusicInput = html.match(
+        /<input[^>]*id="local-music-input"[^>]*>/
+    );
+    assert(localMusicInput, "mobile audio file input is missing");
+    assert(/accept="[^"]*\.mp3[^"]*\.m4a[^"]*\.wav[^"]*"/.test(
+        localMusicInput[0]
+    ), "mobile audio file input must list Safari-compatible extensions");
+    assert(!localMusicInput[0].includes("audio/*"),
+        "mobile audio file input must avoid the iOS WebKit audio wildcard");
+    assert(/\bmultiple\b/.test(localMusicInput[0]),
+        "mobile audio file input must allow multiple files");
     assert(backup.includes("localMusicMedia:"),
         "local music blobs are not excluded from ordinary backups");
     const backupWindow = {};
