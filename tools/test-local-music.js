@@ -200,6 +200,12 @@ async function main() {
         "local playback does not read the blob from IndexedDB");
     assert(listeners.includes("localMusicStore.remove(song.id)"),
         "local delete does not remove the blob");
+    assert(/const latestSystemSongs = \[\];/.test(listeners),
+        "built-in music playlist is not empty");
+    assert(!listeners.includes("files.catbox.moe/hzpr94.mp3"),
+        "built-in music data is still bundled");
+    assert(listeners.includes("songsBeforeBuiltInCleanup"),
+        "saved playlists do not remove legacy built-in songs");
 
     console.log(JSON.stringify({
         passed: true,
@@ -210,6 +216,7 @@ async function main() {
             localMetadataUpdate: true,
             deleteRemovesBlob: true,
             remoteLegacyCompatible: true,
+            builtInSongsRemoved: true,
             objectUrlCreates: createCount,
             objectUrlRevokes: revokeCount,
             objectUrlLeaks: liveUrls.size,
