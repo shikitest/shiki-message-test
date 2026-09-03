@@ -140,6 +140,11 @@
         var splash = document.getElementById('splash-declaration');
         if (!splash) return;
 
+        if (document.documentElement.getAttribute('data-skip-opening') === 'true') {
+            splash.style.display = 'none';
+            return;
+        }
+
         localStorage.removeItem('splashPledgeSigned_v2');
         localStorage.removeItem('splashPledgeSigned_v1');
         localStorage.removeItem('splashPledgeSigned');
@@ -562,23 +567,36 @@ function nextTourStep() {
     showTourStep(currentTourStep);
 }
 
+let createNewSessionPromise = null;
+
 async function createNewSession(switchToIt = true) {
-    const newId = Date.now().toString(36) + Math.random().toString(36).substr(2);
-    const newSession = {
-        id: newId,
-        name: `会话 ${new Date().toLocaleDateString()}`,
-        createdAt: Date.now()
-    };
+    if (createNewSessionPromise) return createNewSessionPromise;
+    createNewSessionPromise = (async function () {
+        let newId;
+        do {
+            newId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        } while (Array.isArray(sessionList) && sessionList.some(session => String(session.id) === newId));
+        const newSession = {
+            id: newId,
+            name: `会话 ${new Date().toLocaleDateString()}`,
+            createdAt: Date.now()
+        };
+        const previousList = Array.isArray(sessionList) ? sessionList : [];
+        const nextList = previousList.concat(newSession);
+        await localforage.setItem(`${APP_PREFIX}sessionList`, nextList);
+        sessionList = nextList;
 
-    sessionList.push(newSession);
-    await localforage.setItem(`${APP_PREFIX}sessionList`, sessionList);
-
-    if (switchToIt) {
-        window.location.hash = newId;
-        window.location.reload();
+        if (switchToIt) {
+            window.location.hash = newId;
+            window.location.reload();
+        }
+        return newId;
+    })();
+    try {
+        return await createNewSessionPromise;
+    } finally {
+        createNewSessionPromise = null;
     }
-    
-    return newId;
 }
 
 window.selectAnnType = function(type) {
@@ -905,5 +923,3 @@ function setupTutorialListeners() {
         });
     }
 }
-
-

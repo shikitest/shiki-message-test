@@ -186,9 +186,10 @@
 
 (function() {
     var KEY = 'keepaliveAudioEnabled';
-    var SRC = 'https://img.heliar.top/file/1772885159972_silence.m4a';
+    var SRC = 'assets/keepalive.wav';
     var _audio = null;
     var _unlockBound = false;
+    var _lastError = null;
 
     function _get() { return localStorage.getItem(KEY) === 'true'; }
 
@@ -198,9 +199,34 @@
         _audio.loop   = true;
         _audio.volume = 0.01;
         _audio.preload = 'auto';
-        _audio.addEventListener('play',  function(){ _setUI(true);  });
+        _audio.setAttribute('playsinline', '');
+        _audio.setAttribute('webkit-playsinline', '');
+        _audio.addEventListener('play',  function(){ _lastError = null; _setUI(true);  });
         _audio.addEventListener('pause', function(){ _setUI(false); });
+        _audio.addEventListener('error', function(){
+            _lastError = '音频加载失败，请刷新后重试';
+            _setUI(false);
+        });
         return _audio;
+    }
+
+    function _unbindUnlock() {
+        if (!_unlockBound) return;
+        _unlockBound = false;
+        document.removeEventListener('touchend', _unlock, true);
+        document.removeEventListener('click', _unlock, true);
+    }
+
+    function _unlock() {
+        _unbindUnlock();
+        if (_get()) _start();
+    }
+
+    function _bindUnlock() {
+        if (_unlockBound) return;
+        _unlockBound = true;
+        document.addEventListener('touchend', _unlock, { once: true, capture: true });
+        document.addEventListener('click', _unlock, { once: true, capture: true });
     }
 
     function _setUI(playing) {
@@ -216,7 +242,8 @@
         if (desc) {
             if (!_get())      desc.textContent = '静音循环音频，防止页面被系统挂起';
             else if (playing) desc.textContent = '运行中 · 页面已保活';
-            else              desc.textContent = '等待交互后启动…';
+            else if (_lastError) desc.textContent = _lastError;
+            else              desc.textContent = '轻触页面后启动…';
         }
         if (row)  row.style.display = _get() ? 'flex' : 'none';
         var bars = document.querySelectorAll('.keepalive-wave-bar');
@@ -225,22 +252,34 @@
 
     function _start() {
         var a = _createAudio();
-        var p = a.play();
-        if (p && p.then) {
-            p.catch(function(){
+        _lastError = null;
+        var p;
+        try {
+            p = a.play();
+        } catch (error) {
+            _lastError = '需要轻触页面才能启动';
+            _setUI(false);
+            _bindUnlock();
+            return;
+        }
+        if (p && typeof p.then === 'function') {
+            p.then(function(){
+                _unbindUnlock();
+                _setUI(true);
+            }).catch(function(){
+                _lastError = '需要轻触页面才能启动';
                 _setUI(false);
-                if (!_unlockBound) {
-                    _unlockBound = true;
-                    function unlock(){ if(_get()) a.play().catch(function(){}); _unlockBound=false; }
-                    document.addEventListener('touchstart', unlock, { once:true });
-                    document.addEventListener('click',      unlock, { once:true });
-                }
+                _bindUnlock();
             });
+        } else {
+            _setUI(!a.paused);
         }
     }
 
     function _stop() {
+        _unbindUnlock();
         if (_audio) { _audio.pause(); _audio.currentTime = 0; }
+        _lastError = null;
         _setUI(false);
     }
 
@@ -258,10 +297,24 @@
     };
 
     document.addEventListener('visibilitychange', function(){
-        if (_get() && document.visibilityState === 'visible' && _audio && _audio.paused) {
-            _audio.play().catch(function(){});
+        if (_get() && document.visibilityState === 'visible') {
+            _start();
         }
     });
+
+    window.addEventListener('pageshow', function(){
+        if (_get()) _start();
+    });
+
+    window._getKeepaliveAudioStatus = function() {
+        return {
+            enabled: _get(),
+            created: Boolean(_audio),
+            playing: Boolean(_audio && !_audio.paused),
+            source: SRC,
+            error: _lastError
+        };
+    };
 
     document.addEventListener('DOMContentLoaded', function(){
         _setUI(false);

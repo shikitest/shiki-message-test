@@ -1,26 +1,29 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light" data-color-theme="black-white">
+<html lang="zh-CN" data-theme="light" data-color-theme="black-white" data-skip-opening="true" data-shell-booting="true">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#000000">
+    <meta name="theme-color" content="#829889">
 
     <title>传讯</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="icon" type="image/png" sizes="192x192" href="https://file.youtochat.com/images/20260216/1771224856844_qdqqd.jpeg">
-    <link rel="apple-touch-icon" href="https://file.youtochat.com/images/20260216/1771224856844_qdqqd.jpeg">
-    <meta name="apple-mobile-web-app-title" content="ʚ𝑳𝑶𝑽𝑬ɞ">
+    <link rel="icon" type="image/svg+xml" href="assets/app-icon.svg">
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/app-icon-192.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="apple-mobile-web-app-title" content="传讯">
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/app-shell.css">
 
     <style id="css-live-preview-style"></style>
 </head>
@@ -2259,6 +2262,7 @@
     <script src="js/features/envelope.js"></script>
     <script src="js/features/reply-library.js"></script>
     <script src="js/features/theme-editor.js"></script>
+    <script src="js/ui/session-group-store.js"></script>
     <script src="js/features/group-chat.js"></script>
     <script src="js/features/call.js"></script>
 
@@ -2266,8 +2270,18 @@
     <script src="js/games.js"></script> 
     <script src="js/features.js"></script> 
     <script src="js/data.js"></script>
+    <script src="js/background-support.js"></script>
     <script src="js/onboarding.js"></script> 
     <script src="js/local-music-store.js"></script>
+    <script src="js/ui/conversation-meta-store.js"></script>
+    <script src="js/ui/conversation-avatar-store.js"></script>
+    <script src="js/ui/message-date-search.js"></script>
+    <script src="js/ui/media-preview.js"></script>
+    <script src="js/ui/message-search.js"></script>
+    <script src="js/ui/chat-detail.js"></script>
+    <script src="js/ui/watch-together-store.js"></script>
+    <script src="js/ui/watch-together.js"></script>
+    <script src="js/ui/app-shell.js"></script>
     <script src="js/listeners.js"></script>
     <script src="js/app.js"></script>
    

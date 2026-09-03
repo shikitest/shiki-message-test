@@ -12,11 +12,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const hideWelcomeScreen = () => {
         if (!welcomeScreen) return;
-        welcomeScreen.classList.add('hidden');
-        setTimeout(() => {
-            welcomeScreen.style.display = 'none';
-        }, 800);
+        welcomeScreen.style.display = 'none';
     };
+
+    const wakeRollingScheduler = () => {
+        if (
+            !window.RollingMessageScheduler ||
+            typeof window.RollingMessageScheduler.wake !== 'function'
+        ) return;
+        try {
+            const wakeResult = window.RollingMessageScheduler.wake();
+            if (wakeResult && typeof wakeResult.catch === 'function') {
+                wakeResult.catch(error => console.warn('[resume] 主动消息检查失败:', error));
+            }
+        } catch (error) {
+            console.warn('[resume] 主动消息检查失败:', error);
+        }
+    };
+
+    hideWelcomeScreen();
 
     const safeAwait = async (promise, fallback = null) => {
         try {
@@ -49,6 +63,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateLoader('正在建立安全连接...', '10%');
         await safeAwait(initializeSession());
 
+        if (window.SessionGroupStore && window.ConversationMetaStore && typeof window.activateGroupChatSession === 'function') {
+            await safeAwait(window.ConversationMetaStore.load());
+            const legacyGroupEnabled = Boolean(
+                typeof groupChatSettings !== 'undefined' && groupChatSettings && groupChatSettings.enabled
+            );
+            const currentConversationMeta = window.ConversationMetaStore.get(SESSION_ID, {
+                isCurrent: true,
+                legacyGroupEnabled: legacyGroupEnabled
+            });
+            await safeAwait(window.activateGroupChatSession(SESSION_ID, {
+                isGroup: currentConversationMeta.type === 'group' || currentConversationMeta.legacyGroup,
+                migrateLegacy: currentConversationMeta.legacyGroup === true
+            }));
+        }
+
         updateLoader('正在读取记忆存档...', '40%');
 await safeAwait(loadData());
         if (
@@ -56,6 +85,112 @@ await safeAwait(loadData());
             typeof window.TranslationHelper.syncUI === 'function'
         ) {
             window.TranslationHelper.syncUI();
+        }
+
+        let appShellReady = false;
+        if (
+            window.ShikiAppShell &&
+            typeof window.ShikiAppShell.initialize === 'function'
+        ) {
+            try {
+                await window.ShikiAppShell.initialize({
+                getSessions: () => Array.isArray(sessionList) ? sessionList.slice() : [],
+                getCurrentSessionId: () => SESSION_ID,
+                getMessages: () => Array.isArray(messages) ? messages.slice() : [],
+                getMyName: () => settings.myName || '我',
+                getPartnerName: () => settings.partnerName || '对方',
+                getPartnerStatus: () => settings.partnerStatus || '在线',
+                getGroupMembers: () => typeof window.getGroupChatMembers === 'function' ? window.getGroupChatMembers() : [],
+                getGroupMemberById: memberId => typeof window.getGroupMemberById === 'function' ? window.getGroupMemberById(memberId) : null,
+                getLegacyGroupEnabled: () => Boolean(
+                    typeof groupChatSettings !== 'undefined' &&
+                    groupChatSettings &&
+                    groupChatSettings.enabled
+                ),
+                createSession: () => createNewSession(false),
+                renameSession: async (sessionId, name) => {
+                    const target = sessionList.find(item => String(item.id) === String(sessionId));
+                    if (!target) throw new Error('New session was not found');
+                    const previousName = target.name;
+                    target.name = name;
+                    try {
+                        await localforage.setItem(`${APP_PREFIX}sessionList`, sessionList);
+                    } catch (error) {
+                        target.name = previousName;
+                        throw error;
+                    }
+                },
+                rollbackNewSession: async (sessionId) => {
+                    const previousList = Array.isArray(sessionList) ? sessionList.slice() : [];
+                    const nextList = previousList.filter(item => String(item.id) !== String(sessionId));
+                    try {
+                        await localforage.setItem(`${APP_PREFIX}sessionList`, nextList);
+                        sessionList = nextList;
+                    } catch (error) {
+                        sessionList = previousList;
+                        throw error;
+                    }
+                    const cleanupTasks = [];
+                    if (window.ConversationMetaStore) cleanupTasks.push(window.ConversationMetaStore.remove(sessionId));
+                    if (window.SessionGroupStore) cleanupTasks.push(window.SessionGroupStore.remove(sessionId));
+                    if (window.ConversationAvatarStore) cleanupTasks.push(window.ConversationAvatarStore.remove(sessionId));
+                    if (window.WatchTogetherStore) cleanupTasks.push(window.WatchTogetherStore.remove(sessionId));
+                    await Promise.all(cleanupTasks.map(task => Promise.resolve(task).catch(error => {
+                        console.warn('[AppShell] 新会话附属数据清理失败:', error);
+                    })));
+                },
+                createGroupSession: sessionId => window.SessionGroupStore
+                    ? window.SessionGroupStore.create(sessionId)
+                    : Promise.resolve(null),
+                locateMessageById: messageId => new Promise(resolve => {
+                    const targetExists = messages.some(message => String(message.id) === String(messageId));
+                    if (!targetExists) {
+                        if (typeof showNotification === 'function') showNotification('没有找到这条消息', 'warning');
+                        resolve(false);
+                        return;
+                    }
+                    displayedMessageCount = messages.length;
+                    renderMessages(false);
+                    requestAnimationFrame(() => {
+                        const target = Array.from(DOMElements.chatContainer.querySelectorAll('.message-wrapper,[data-id]')).find(node => String(node.dataset.id || node.dataset.msgId) === String(messageId));
+                        if (!target) {
+                            if (typeof showNotification === 'function') showNotification('消息暂时无法定位', 'warning');
+                            resolve(false);
+                            return;
+                        }
+                        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        target.classList.add('shiki-message-located');
+                        if (window._shikiLocateHighlightTimer) clearTimeout(window._shikiLocateHighlightTimer);
+                        window._shikiLocateHighlightTimer = setTimeout(() => {
+                            target.classList.remove('shiki-message-located');
+                            window._shikiLocateHighlightTimer = null;
+                        }, 1800);
+                        resolve(true);
+                    });
+                }),
+                openClearMessages: () => {
+                    if (typeof clearAllAppData === 'function') clearAllAppData();
+                },
+                notify: (message, type) => {
+                    if (typeof showNotification === 'function') {
+                        showNotification(message, type || 'info');
+                    }
+                }
+                });
+                appShellReady = true;
+            } catch (error) {
+                console.error('[AppShell] 初始化失败，恢复原聊天界面:', error);
+                const shell = document.getElementById('shiki-app-shell');
+                if (shell) shell.hidden = true;
+                document.body.classList.remove('shiki-primary-view-active');
+                document.body.classList.add('shiki-chat-view-active');
+            } finally {
+                document.documentElement.removeAttribute('data-shell-booting');
+            }
+        }
+        if (!appShellReady && !window.ShikiAppShell) {
+            document.documentElement.removeAttribute('data-shell-booting');
+            document.body.classList.add('shiki-chat-view-active');
         }
 
 
@@ -271,10 +406,14 @@ updateLoader('正在渲染我们的世界...', '70%');
             safeAwait(initializeRandomUI?.()),
             safeAwait(initMusicPlayer?.())
         ]);
+        wakeRollingScheduler();
 
         setInterval(checkStatusChange, 60000);
 
-        if (disclaimerModal) {
+        if (
+            disclaimerModal &&
+            document.documentElement.getAttribute('data-skip-opening') !== 'true'
+        ) {
             const tourSeen = await safeAwait(localforage?.getItem(APP_PREFIX + 'tour_seen'), false);
             
             if (!tourSeen) {
@@ -292,7 +431,7 @@ updateLoader('正在渲染我们的世界...', '70%');
         }
 
         updateLoader('连接成功，欢迎回来。', '100%');
-        setTimeout(hideWelcomeScreen, 3500);
+        hideWelcomeScreen();
 
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
@@ -309,6 +448,7 @@ updateLoader('正在渲染我们的世界...', '70%');
                     console.error('[visibilitychange] 保存失败:', e);
                 }
             } else if (document.visibilityState === 'visible') {
+                wakeRollingScheduler();
                 try {
                     const backup = typeof _tryRecoverFromBackup === 'function' ? _tryRecoverFromBackup() : null;
                     if (backup && Array.isArray(backup.messages) && backup.messages.length > 0 && Array.isArray(messages) && backup.messages.length > messages.length) {
@@ -339,6 +479,7 @@ updateLoader('正在渲染我们的世界...', '70%');
         });
 
         window.addEventListener('pageshow', () => {
+            wakeRollingScheduler();
             if (
                 window.TranslationHelper &&
                 typeof window.TranslationHelper.syncUI === 'function'
@@ -371,21 +512,11 @@ updateLoader('正在渲染我们的世界...', '70%');
             }
         })();
 
-        setTimeout(async () => {
-            if ('Notification' in window && Notification.permission === 'default') {
-                try {
-                    const permission = await Notification.requestPermission();
-                    if (permission === 'granted') {
-                        showNotification('已开启系统通知，收到消息时会提醒你', 'success', 3000);
-                    }
-                } catch(e) {
-                    console.warn('通知权限请求失败:', e);
-                }
-            }
-        }, 3000);
-
     } catch (err) {
         console.error('严重初始化错误:', err);
+        document.documentElement.removeAttribute('data-shell-booting');
+        document.body.classList.remove('shiki-primary-view-active');
+        document.body.classList.add('shiki-chat-view-active');
         try {
             const backup = typeof _tryRecoverFromBackup === 'function' ? _tryRecoverFromBackup() : null;
             if (backup && Array.isArray(backup.messages) && backup.messages.length > 0) {
@@ -401,7 +532,7 @@ updateLoader('正在渲染我们的世界...', '70%');
             console.warn('[boot] 初始化失败后的恢复也失败:', recoverErr);
         }
         updateLoader('加载遇到问题，已强制进入...', '100%');
-        setTimeout(hideWelcomeScreen, 3500);
+        hideWelcomeScreen();
     }
 });
 const stickerInput = document.getElementById('sticker-file-input');

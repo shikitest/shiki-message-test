@@ -40,6 +40,9 @@ var groupChatSettings = (function() {
         return saved;
     } catch(e) { return { enabled: false, showAvatar: true, showName: true, members: [] }; }
 })();
+var _legacyGroupChatSettings = groupChatSettings;
+var _activeGroupSessionId = null;
+var _activeGroupSessionScoped = false;
 (function loadGroupAvatars() {
     if (!window.localforage) return;
     var members = groupChatSettings.members || [];
@@ -67,6 +70,29 @@ function saveGroupChatSettings() {
             return { name: m.name, id: m.id, avatarRef: 'gca_' + m.id };
         })
     };
+    if (_activeGroupSessionScoped && _activeGroupSessionId && window.SessionGroupStore) {
+        var scopedMembers = members.map(function(m) {
+            if (!m.id) m.id = 'gcm_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+            return { name: m.name, id: m.id, avatarRef: m.avatarRef || null };
+        });
+        Promise.all(members.map(function(m) {
+            return window.SessionGroupStore.setMemberAvatar(_activeGroupSessionId, m.id, m.avatar || null)
+                .then(function(ref) { m.avatarRef = ref; });
+        })).then(function() {
+            return window.SessionGroupStore.save(_activeGroupSessionId, {
+                enabled: groupChatSettings.enabled,
+                showAvatar: groupChatSettings.showAvatar,
+                showName: groupChatSettings.showName,
+                members: scopedMembers.map(function(saved, index) {
+                    saved.avatarRef = members[index].avatarRef || null;
+                    return saved;
+                })
+            });
+        }).catch(function(e) {
+            console.warn('当前群聊设置保存失败:', e);
+        });
+        return;
+    }
     try {
         localStorage.setItem('groupChatSettings', JSON.stringify(toSave));
     } catch(e) {
@@ -221,7 +247,13 @@ window.saveGroupMember = function() {
     var name = (document.getElementById('group-member-name-input').value || '').trim();
     if (!name) { alert('请输入成员名字'); return; }
     var idxVal = document.getElementById('group-member-edit-index').value;
-    var member = { name: name, avatar: _groupMemberAvatarDataUrl };
+    var previous = idxVal !== '' ? groupChatSettings.members[parseInt(idxVal)] : null;
+    var member = {
+        id: previous && previous.id ? previous.id : ('gcm_' + Date.now() + '_' + Math.random().toString(36).slice(2,7)),
+        name: name,
+        avatar: _groupMemberAvatarDataUrl,
+        avatarRef: previous && previous.avatarRef ? previous.avatarRef : null
+    };
     if (idxVal !== '') {
         groupChatSettings.members[parseInt(idxVal)] = member;
     } else {
@@ -235,6 +267,10 @@ window.saveGroupMember = function() {
 
 window.deleteGroupMember = function(idx) {
     if (!confirm('确定删除该成员吗？')) return;
+    var removed = groupChatSettings.members[idx];
+    if (_activeGroupSessionScoped && removed && removed.id && window.SessionGroupStore) {
+        window.SessionGroupStore.removeMemberAvatar(_activeGroupSessionId, removed.id).catch(function() {});
+    }
     groupChatSettings.members.splice(idx, 1);
     saveGroupChatSettings();
     renderGroupMembersList();
@@ -301,6 +337,32 @@ window.isGroupChatEnabled = function() {
         groupChatSettings.enabled
     );
 
+};
+
+window.activateGroupChatSession = async function(sessionId, options) {
+    var opts = options || {};
+    _activeGroupSessionId = String(sessionId || '');
+    _activeGroupSessionScoped = false;
+    if (!_activeGroupSessionId || !window.SessionGroupStore) return groupChatSettings;
+    if (!opts.isGroup) {
+        groupChatSettings = { enabled: false, showAvatar: true, showName: true, members: [] };
+        _activeGroupSessionScoped = true;
+        updateGroupModeUI();
+        return groupChatSettings;
+    }
+    var stored = await window.SessionGroupStore.get(_activeGroupSessionId);
+    if (!stored && opts.migrateLegacy) {
+        stored = await window.SessionGroupStore.migrateLegacy(_activeGroupSessionId, _legacyGroupChatSettings);
+    }
+    if (!stored) stored = await window.SessionGroupStore.create(_activeGroupSessionId);
+    groupChatSettings = await window.SessionGroupStore.hydrate(_activeGroupSessionId, stored);
+    _activeGroupSessionScoped = true;
+    updateGroupModeUI();
+    return groupChatSettings;
+};
+
+window.getActiveGroupChatSessionId = function() {
+    return _activeGroupSessionId;
 };
 document.addEventListener('DOMContentLoaded', function() {
     var exportAllBtn = document.getElementById('export-all-settings');

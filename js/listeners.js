@@ -1529,6 +1529,27 @@ if (_cancelEnvEl) _cancelEnvEl.addEventListener('click', () => {
                     sessionList = sessionList.filter(s => s.id !== sessionId);
 localforage.setItem(`${APP_PREFIX}sessionList`, sessionList);
 
+if (window.SessionGroupStore) {
+    window.SessionGroupStore.remove(sessionId).catch(function(error) {
+        console.warn('群聊会话配置清理失败:', error);
+    });
+}
+if (window.WatchTogetherStore) {
+    window.WatchTogetherStore.remove(sessionId).catch(function(error) {
+        console.warn('共同观影数据清理失败:', error);
+    });
+}
+if (window.ConversationAvatarStore) {
+    window.ConversationAvatarStore.remove(sessionId).catch(function(error) {
+        console.warn('会话头像清理失败:', error);
+    });
+}
+if (window.ConversationMetaStore) {
+    window.ConversationMetaStore.remove(sessionId).catch(function(error) {
+        console.warn('会话界面数据清理失败:', error);
+    });
+}
+
 // 同时清除 localStorage 和 localforage 中该会话的所有键
 Object.keys(localStorage).forEach(key => {
     if (key.startsWith(`${APP_PREFIX}${sessionId}_`)) safeRemoveItem(key);

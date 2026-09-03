@@ -280,13 +280,22 @@ function deduplicateContentArray(arr, baseSystemArray = []) {
             } catch (e) { console.warn("音频播放失败:", e); }
         };
 
-        const throttledSaveData = () => {
+        let pendingSaveCallbacks = [];
+        const throttledSaveData = (afterSave) => {
+            if (typeof afterSave === 'function') pendingSaveCallbacks.push(afterSave);
             if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
                 try {
+                    const callbacks = pendingSaveCallbacks.splice(0);
                     const maybePromise = saveData();
-                    if (maybePromise && typeof maybePromise.catch === 'function') {
-                        maybePromise.catch(e => console.error('[throttledSaveData] 保存失败:', e));
+                    if (maybePromise && typeof maybePromise.then === 'function') {
+                        maybePromise.then(result => {
+                            callbacks.forEach(callback => {
+                                try { callback(result); } catch (error) { console.warn('[throttledSaveData] 保存后处理失败:', error); }
+                            });
+                        }).catch(e => console.error('[throttledSaveData] 保存失败:', e));
+                    } else {
+                        callbacks.forEach(callback => callback());
                     }
                 } catch (e) {
                     console.error('[throttledSaveData] 保存失败:', e);

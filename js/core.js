@@ -48,6 +48,15 @@
             // 直接写入 IndexedDB（跳过 500ms 防抖），确保刷新后不恢复
             localforage.setItem(getStorageKey('chatMessages'), []).catch(() => {});
 
+            if (window.ConversationMetaStore && SESSION_ID) {
+                window.ConversationMetaStore.update(SESSION_ID, {
+                    lastMessagePreview: null,
+                    lastMessageType: null,
+                    lastMessageAt: null,
+                    updatedAt: Date.now()
+                }).catch(() => {});
+            }
+
             renderMessages();
             showNotification('当前会话消息已清除', 'success');
         }
@@ -688,6 +697,7 @@ const saveData = async () => {
     }
 
     _backupCriticalData();
+    return { failed };
 };
 
         function initializeRandomUI() {
@@ -1424,7 +1434,12 @@ const addMessage = (message) => {
         container.scrollTop = container.scrollHeight;
     });
 
-    throttledSaveData();
+    throttledSaveData(saveResult => {
+        if (saveResult && Array.isArray(saveResult.failed) && saveResult.failed.includes('chatMessages')) return;
+        if (window.ShikiAppShell && typeof window.ShikiAppShell.noteMessageSaved === 'function') {
+            window.ShikiAppShell.noteMessageSaved(message);
+        }
+    });
 };
 
         window._addCallEvent = (icon, label, detail) => {

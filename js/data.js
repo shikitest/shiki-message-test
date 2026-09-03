@@ -534,17 +534,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
 window._sendPartnerNotification = function(title, body) {
     try {
-        if (localStorage.getItem('notifEnabled') !== '1') return;
-        if (!('Notification' in window)) return;
-        if (Notification.permission !== 'granted') return;
-        if (!document.hidden) return;
-        new Notification(title || '传讯', {
+        if (localStorage.getItem('notifEnabled') !== '1') return Promise.resolve(false);
+        if (!('Notification' in window)) return Promise.resolve(false);
+        if (Notification.permission !== 'granted') return Promise.resolve(false);
+        if (!document.hidden) return Promise.resolve(false);
+        var options = {
             body: body || '对方发来了消息',
-            icon: (document.querySelector('#partner-avatar img') || {}).src,
+            icon: (document.querySelector('#partner-avatar img') || {}).src || 'assets/app-icon-192.png',
+            badge: 'assets/app-icon-192.png',
             tag: 'partner-msg',
             renotify: true
-        });
-    } catch(e) {}
+        };
+        if (window.BackgroundSupport && typeof window.BackgroundSupport.showNotification === 'function') {
+            return window.BackgroundSupport.showNotification(title || '传讯', options);
+        }
+        new Notification(title || '传讯', options);
+        return Promise.resolve(true);
+    } catch(e) {
+        return Promise.resolve(false);
+    }
 };
 
 window.handleNotifToggle = function(checkbox) {
@@ -559,7 +567,12 @@ window.handleNotifToggle = function(checkbox) {
             if (perm === 'granted') {
                 if (statusEl) statusEl.textContent = '✅ 已开启 — 当页面在后台时，收到消息会弹出系统通知';
                 localStorage.setItem('notifEnabled', '1');
-                try { new Notification('传讯通知已开启 ✨', { body: '你现在可以在后台收到消息提醒了', tag: 'notif-test' }); } catch(e) {}
+                var testOptions = { body: '网页在后台运行时可以收到消息提醒', tag: 'notif-test', icon: 'assets/app-icon-192.png' };
+                if (window.BackgroundSupport && typeof window.BackgroundSupport.showNotification === 'function') {
+                    window.BackgroundSupport.showNotification('传讯通知已开启', testOptions).catch(function(){});
+                } else {
+                    try { new Notification('传讯通知已开启', testOptions); } catch(e) {}
+                }
             } else if (perm === 'denied') {
                 checkbox.checked = false;
                 if (statusEl) statusEl.textContent = '❌ 权限被拒绝，请自行搜索如何开启';
