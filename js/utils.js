@@ -300,7 +300,7 @@ function deduplicateContentArray(arr, baseSystemArray = []) {
                 } catch (e) {
                     console.error('[throttledSaveData] 保存失败:', e);
                 }
-            }, 500);
+            }, 120);
         };
 
 async function applyCustomFont(url) {
@@ -387,6 +387,18 @@ function applyGlobalThemeCss(cssCode) {
 
 async function exportAllData() {
     try {
+        if (navigator.storage && typeof navigator.storage.estimate === 'function') {
+            try {
+                const estimate = await navigator.storage.estimate();
+                const usage = Number(estimate && estimate.usage) || 0;
+                if (usage >= 100 * 1024 * 1024) {
+                    const sizeMb = Math.round(usage / 1024 / 1024);
+                    if (!confirm(`当前站点约使用 ${sizeMb} MB 存储。大型备份在手机上可能需要较多内存，是否继续？`)) return;
+                }
+            } catch (estimateError) {
+                console.warn('[backup] 导出前容量预估不可用:', estimateError);
+            }
+        }
         if (typeof ChatBackup !== 'undefined' && ChatBackup.buildBackupPayload && ChatBackup.serializeBackupV4) {
             const payload = await ChatBackup.buildBackupPayload({
                 inclMsgs: true,

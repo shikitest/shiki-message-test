@@ -201,41 +201,11 @@
     }
 
     function updateStats() {
-        var total = 0, msgs = 0, cfg = 0, media = 0;
-        var processLS = function () {
-            for (var i = 0; i < localStorage.length; i++) {
-                var k = localStorage.key(i) || '';
-                var v = localStorage.getItem(k) || '';
-                var bytes = (k.length + v.length) * 2;
-                total += bytes;
-                if (/messages|msgs|session/i.test(k)) msgs += bytes;
-                else if (v.startsWith('data:image') || v.startsWith('data:video')) media += bytes;
-                else cfg += bytes;
-            }
-            applyStats(total, msgs, cfg, media);
-        };
-        try {
-            if (window.localforage) {
-                localforage.keys().then(function (keys) {
-                    var promises = keys.map(function (k) {
-                        return localforage.getItem(k).then(function (raw) {
-                            if (raw == null) return { k: k, b: 0 };
-                            var str = typeof raw === 'string' ? raw : JSON.stringify(raw);
-                            return { k: k, b: (k.length + str.length) * 2 };
-                        });
-                    });
-                    Promise.all(promises).then(function (results) {
-                        results.forEach(function (r) {
-                            total += r.b;
-                            if (/messages|msgs|session/i.test(r.k)) msgs += r.b;
-                            else if (/avatar|image|photo|bg|background|wallpaper/i.test(r.k)) media += r.b;
-                            else cfg += r.b;
-                        });
-                        applyStats(total, msgs, cfg, media);
-                    }).catch(processLS);
-                }).catch(processLS);
-            } else { processLS(); }
-        } catch (e) { processLS(); }
+        updateStorageUsageBar();
+        ['dm-stat-msgs', 'dm-stat-settings', 'dm-stat-media'].forEach(function (id) {
+            var node = document.getElementById(id);
+            if (node) node.textContent = '按需统计';
+        });
     }
 
     function syncToggles() {
@@ -335,6 +305,8 @@
             displayedMessageCount = typeof HISTORY_BATCH_SIZE !== 'undefined' ? HISTORY_BATCH_SIZE : 20;
             try { localStorage.removeItem('BACKUP_V1_critical'); } catch(e) {}
             try { localStorage.removeItem('BACKUP_V1_timestamp'); } catch(e) {}
+            try { localStorage.removeItem('BACKUP_V1_critical:' + SESSION_ID); } catch(e) {}
+            try { localStorage.removeItem('BACKUP_V1_timestamp:' + SESSION_ID); } catch(e) {}
             if (window.localforage && typeof getStorageKey === 'function') {
                 localforage.setItem(getStorageKey('chatMessages'), []).catch(function() {});
             }
@@ -465,52 +437,44 @@ function updateStorageUsageBar() {
     var text  = document.getElementById('dm-storage-total') || document.getElementById('storage-usage-text');
     if (!bar && !text) return;
 
-    try {
-        if (window.localforage && window.APP_PREFIX) {
-            localforage.keys().then(function(keys) {
-                var promises = keys.map(function(k) {
-                    return localforage.getItem(k).then(function(v) {
-                        if (v === null || v === undefined) return 0;
-                        var str = typeof v === 'string' ? v : JSON.stringify(v);
-                        return (k.length + str.length) * 2;
-                    });
-                });
-                Promise.all(promises).then(function(sizes) {
-                    var total   = sizes.reduce(function(a,b){return a+b;},0);
-                    var usedKB  = (total / 1024).toFixed(1);
-                    var maxBytes = 5 * 1024 * 1024;
-                    var pct     = Math.min(total / maxBytes * 100, 100).toFixed(1);
-                    var fmt     = function(b) { return b<1024 ? b+' B' : b<1048576 ? (b/1024).toFixed(1)+' KB' : (b/1048576).toFixed(2)+' MB'; };
-
-                    if (bar) {
-                        bar.style.width = pct + '%';
-                        if (parseFloat(pct) > 80)
-                            bar.style.background = 'linear-gradient(90deg,#FF3B30,#CC0000)';
-                        else if (parseFloat(pct) > 50)
-                            bar.style.background = 'linear-gradient(90deg,#FF9F0A,#E07000)';
-                        else
-                            bar.style.background = 'linear-gradient(90deg,var(--accent-color),rgba(var(--accent-color-rgb),0.6))';
-                    }
-                    if (text) text.textContent = fmt(total) + ' / ~5 MB (' + pct + '%)';
-                });
-            }).catch(function() {
-                var ls = 0;
-                for (var i = 0; i < localStorage.length; i++) {
-                    var k = localStorage.key(i) || '';
-                    var v = localStorage.getItem(k) || '';
-                    ls += (k.length + v.length) * 2;
-                }
-                var pct = Math.min(ls / (5*1024*1024) * 100, 100).toFixed(1);
-                if (bar) bar.style.width = pct + '%';
-                if (text) text.textContent = (ls/1024).toFixed(1) + ' KB (localStorage)';
-            });
-        } else {
-            if (text) text.textContent = '暂无数据';
-            if (bar)  bar.style.width  = '0%';
-        }
-    } catch(e) {
-        if (text) text.textContent = '无法读取';
+    var fmt = function(b) {
+        if (b < 1024) return b + ' B';
+        if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+        if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+        return (b / 1073741824).toFixed(2) + ' GB';
+    };
+    if (!navigator.storage || typeof navigator.storage.estimate !== 'function') {
+        if (bar) bar.style.width = '0%';
+        if (text) text.textContent = '浏览器暂不提供存储容量信息';
+        return Promise.resolve(null);
     }
+    if (window._shikiStorageEstimatePromise) return window._shikiStorageEstimatePromise;
+    window._shikiStorageEstimatePromise = navigator.storage.estimate().then(function(result) {
+        var usage = Number(result && result.usage) || 0;
+        var quota = Number(result && result.quota) || 0;
+        var pct = quota > 0 ? Math.min(100, usage / quota * 100) : 0;
+        if (bar) {
+            bar.style.width = pct.toFixed(1) + '%';
+            bar.style.background = pct > 80
+                ? 'linear-gradient(90deg,#FF3B30,#CC0000)'
+                : pct > 50
+                    ? 'linear-gradient(90deg,#FF9F0A,#E07000)'
+                    : 'linear-gradient(90deg,var(--accent-color),rgba(var(--accent-color-rgb),0.6))';
+        }
+        if (text) text.textContent = quota > 0
+            ? fmt(usage) + ' / ' + fmt(quota) + ' (' + pct.toFixed(1) + '%)'
+            : fmt(usage) + '（配额未知）';
+        return result;
+    }).catch(function(error) {
+        console.warn('[data] 无法读取浏览器存储配额:', error);
+        if (bar) bar.style.width = '0%';
+        if (text) text.textContent = '存储容量暂不可用';
+        return null;
+    }).then(function(result) {
+        window._shikiStorageEstimatePromise = null;
+        return result;
+    });
+    return window._shikiStorageEstimatePromise;
 }
 
 (function() {

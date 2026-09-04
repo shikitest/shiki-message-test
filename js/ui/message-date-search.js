@@ -9,6 +9,9 @@
     let visibleMonth = 0;
     let initialized = false;
     let indexBuilds = 0;
+    let minimumMonth = null;
+    let maximumMonth = null;
+    let monthRenderQueued = false;
 
     function normalizeMessageTimestamp(value) {
         if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
@@ -94,7 +97,7 @@
             '</header>',
             '<div class="shiki-calendar-nav">',
             '<button type="button" data-date-action="previous" aria-label="上个月"><i class="fas fa-chevron-left"></i></button>',
-            '<strong id="shiki-calendar-title"></strong>',
+            '<label class="shiki-calendar-month-picker"><strong id="shiki-calendar-title"></strong><input id="shiki-calendar-month" type="month" aria-label="选择年月"></label>',
             '<button type="button" data-date-action="next" aria-label="下个月"><i class="fas fa-chevron-right"></i></button>',
             '</div>',
             '<div class="shiki-calendar-week"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>',
@@ -103,11 +106,28 @@
         ].join('');
         document.body.appendChild(overlay);
         overlay.addEventListener('click', handleClick);
+        overlay.addEventListener('change', handleChange);
+    }
+
+    function monthValue(year, month) { return year * 12 + month; }
+    function monthFromValue(value) { return { year: Math.floor(value / 12), month: value % 12 }; }
+    function setVisibleMonth(value) {
+        if (minimumMonth !== null) value = Math.max(minimumMonth, value);
+        if (maximumMonth !== null) value = Math.min(maximumMonth, value);
+        const next = monthFromValue(value);
+        visibleYear = next.year;
+        visibleMonth = next.month;
     }
 
     function render() {
         if (!overlay || !dateIndex) return;
         overlay.querySelector('#shiki-calendar-title').textContent = visibleYear + '年' + (visibleMonth + 1) + '月';
+        const picker = overlay.querySelector('#shiki-calendar-month');
+        picker.value = visibleYear + '-' + pad(visibleMonth + 1);
+        picker.min = minimumMonth === null ? '' : monthFromValue(minimumMonth).year + '-' + pad(monthFromValue(minimumMonth).month + 1);
+        picker.max = maximumMonth === null ? '' : monthFromValue(maximumMonth).year + '-' + pad(monthFromValue(maximumMonth).month + 1);
+        overlay.querySelector('[data-date-action="previous"]').disabled = minimumMonth !== null && monthValue(visibleYear, visibleMonth) <= minimumMonth;
+        overlay.querySelector('[data-date-action="next"]').disabled = maximumMonth !== null && monthValue(visibleYear, visibleMonth) >= maximumMonth;
         const grid = overlay.querySelector('#shiki-calendar-grid');
         const calendar = buildCalendarMonth(visibleYear, visibleMonth);
         const todayKey = getLocalDateKey(new Date());
@@ -151,9 +171,17 @@
         indexedMessages = context && context.getMessages ? context.getMessages() : [];
         dateIndex = buildDateIndex(indexedMessages);
         indexBuilds += 1;
+        const validKeys = Object.keys(dateIndex).sort();
+        if (validKeys.length) {
+            const first = validKeys[0].split('-').map(Number);
+            const last = validKeys[validKeys.length - 1].split('-').map(Number);
+            minimumMonth = monthValue(first[0], first[1] - 1);
+            maximumMonth = monthValue(last[0], last[1] - 1);
+        } else {
+            minimumMonth = maximumMonth = monthValue(new Date().getFullYear(), new Date().getMonth());
+        }
         const initial = latestDate(indexedMessages);
-        visibleYear = initial.getFullYear();
-        visibleMonth = initial.getMonth();
+        setVisibleMonth(monthValue(initial.getFullYear(), initial.getMonth()));
         render();
         overlay.hidden = false;
         document.body.classList.add('shiki-record-page-active');
@@ -163,13 +191,25 @@
         if (overlay) overlay.hidden = true;
         dateIndex = null;
         indexedMessages = null;
+        minimumMonth = null;
+        maximumMonth = null;
         document.body.classList.remove('shiki-record-page-active');
     }
 
     function shiftMonth(delta) {
-        const next = new Date(visibleYear, visibleMonth + delta, 1);
-        visibleYear = next.getFullYear();
-        visibleMonth = next.getMonth();
+        if (monthRenderQueued) return;
+        monthRenderQueued = true;
+        setVisibleMonth(monthValue(visibleYear, visibleMonth) + delta);
+        (global.requestAnimationFrame || function (callback) { return setTimeout(callback, 0); })(function () {
+            monthRenderQueued = false;
+            render();
+        });
+    }
+
+    function handleChange(event) {
+        if (event.target.id !== 'shiki-calendar-month' || !/^\d{4}-\d{2}$/.test(event.target.value)) return;
+        const parts = event.target.value.split('-').map(Number);
+        setVisibleMonth(monthValue(parts[0], parts[1] - 1));
         render();
     }
 
@@ -181,8 +221,7 @@
             if (action.dataset.dateAction === 'next') return shiftMonth(1);
             if (action.dataset.dateAction === 'today') {
                 const now = new Date();
-                visibleYear = now.getFullYear();
-                visibleMonth = now.getMonth();
+                setVisibleMonth(monthValue(now.getFullYear(), now.getMonth()));
                 return render();
             }
         }
@@ -210,7 +249,7 @@
         buildDateIndex: buildDateIndex,
         buildCalendarMonth: buildCalendarMonth,
         getDebugSnapshot: function () {
-            return { initialized: initialized, open: Boolean(overlay && !overlay.hidden), indexBuilds: indexBuilds, indexed: dateIndex ? Object.keys(dateIndex).length : 0 };
+            return { initialized: initialized, open: Boolean(overlay && !overlay.hidden), indexBuilds: indexBuilds, indexed: dateIndex ? Object.keys(dateIndex).length : 0, minimumMonth: minimumMonth, maximumMonth: maximumMonth };
         }
     });
 })(window);

@@ -192,7 +192,11 @@
     function shouldSkipKeyGroupChat(key, flags) {
         if (!key) return true;
         // Local music blobs are independent device media, not ordinary backups.
-        if (key.indexOf('localMusicMedia:') !== -1 || key.indexOf('conversationAvatarMediaV1:') !== -1) return true;
+        if (
+            key.indexOf('localMusicMedia:') !== -1 ||
+            key.indexOf('conversationAvatarMediaV1:') !== -1 ||
+            key.indexOf('sessionGroupAvatarV1:') !== -1
+        ) return true;
         if (key.startsWith('annHeaderBg_')) return true;
         if (key.indexOf('dg_header_bg') !== -1 || key.indexOf('dg_overlay_bg') !== -1) return true;
         var patterns = buildModuleSkipPatterns(flags || {});

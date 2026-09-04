@@ -6,6 +6,7 @@
     let chatBar = null;
     let avatarInput = null;
     let initialized = false;
+    let refreshVersion = 0;
 
     function make(tag, className, text) {
         const node = document.createElement(tag);
@@ -54,11 +55,15 @@
 
     function renderAvatar(target, url) {
         if (!target) return;
+        const key = url || (isGroup() ? 'fallback:group' : 'fallback:direct');
+        if (target.dataset.avatarKey === key) return;
+        target.dataset.avatarKey = key;
         target.replaceChildren();
         if (url) {
             const image = make('img');
             image.src = url;
             image.alt = '';
+            image.decoding = 'async';
             target.appendChild(image);
         } else {
             target.appendChild(make('i', 'fas ' + (isGroup() ? 'fa-users' : 'fa-user')));
@@ -88,20 +93,17 @@
 
     async function refresh() {
         if (!initialized) return;
+        const version = ++refreshVersion;
         const session = currentSession() || {};
         const meta = currentMeta();
         const group = isGroup();
         const title = session.name || (context.getPartnerName ? context.getPartnerName() : '未命名会话');
         const members = group && context.getGroupMembers ? context.getGroupMembers() : [];
         const subtitle = group ? ((Array.isArray(members) ? members.length : 0) + ' 位成员') : (context.getPartnerStatus ? context.getPartnerStatus() : '在线');
-        const url = await avatarUrl();
-
         chatBar.querySelector('.shiki-chat-title').textContent = title;
         chatBar.querySelector('.shiki-chat-subtitle').textContent = subtitle;
-        renderAvatar(chatBar.querySelector('.shiki-chat-avatar'), url);
         page.querySelector('.shiki-detail-name').textContent = title;
         page.querySelector('.shiki-detail-type').textContent = group ? '群聊 · ' + subtitle : '单聊';
-        renderAvatar(page.querySelector('.shiki-detail-avatar'), url);
         const pinLabel = page.querySelector('[data-detail-action="pin"] span');
         if (pinLabel) pinLabel.textContent = meta.pinned ? '取消置顶聊天' : '置顶聊天';
         const groupRow = page.querySelector('[data-detail-action="group"]');
@@ -109,6 +111,10 @@
         const renameRow = page.querySelector('[data-detail-action="rename-group"]');
         if (renameRow) renameRow.hidden = !group;
         renderGroupMembers(members);
+        const url = await avatarUrl();
+        if (version !== refreshVersion || String((currentSession() || {}).id || '') !== String(session.id || '')) return;
+        renderAvatar(chatBar.querySelector('.shiki-chat-avatar'), url);
+        renderAvatar(page.querySelector('.shiki-detail-avatar'), url);
     }
 
     function buildChatBar() {

@@ -3,6 +3,8 @@
 
     const STORE_SUFFIX = 'conversationAvatarMediaV1:';
     const objectUrls = new Map();
+    const pendingUrls = new Map();
+    const generations = new Map();
 
     function key(sessionId) {
         return String(global.APP_PREFIX || 'CHAT_APP_V3_') + STORE_SUFFIX + String(sessionId || '');
@@ -22,6 +24,8 @@
             global.URL.revokeObjectURL(url);
         }
         objectUrls.delete(id);
+        pendingUrls.delete(id);
+        generations.set(id, (generations.get(id) || 0) + 1);
     }
 
     async function save(sessionId, file) {
@@ -38,11 +42,23 @@
         const id = String(sessionId || '');
         if (!id) return null;
         if (objectUrls.has(id)) return objectUrls.get(id);
-        const blob = await storage().getItem(key(id));
-        if (!blob || !global.URL || typeof global.URL.createObjectURL !== 'function') return null;
-        const url = global.URL.createObjectURL(blob);
-        objectUrls.set(id, url);
-        return url;
+        if (pendingUrls.has(id)) return pendingUrls.get(id);
+        const generation = generations.get(id) || 0;
+        const pending = storage().getItem(key(id)).then(function (blob) {
+            if ((generations.get(id) || 0) !== generation) return null;
+            if (!blob || !global.URL || typeof global.URL.createObjectURL !== 'function') return null;
+            if (objectUrls.has(id)) return objectUrls.get(id);
+            const url = global.URL.createObjectURL(blob);
+            objectUrls.set(id, url);
+            return url;
+        });
+        pending.then(function () {
+            if (pendingUrls.get(id) === pending) pendingUrls.delete(id);
+        }, function () {
+            if (pendingUrls.get(id) === pending) pendingUrls.delete(id);
+        });
+        pendingUrls.set(id, pending);
+        return pending;
     }
 
     async function remove(sessionId) {

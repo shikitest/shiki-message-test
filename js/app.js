@@ -149,8 +149,11 @@ await safeAwait(loadData());
                         resolve(false);
                         return;
                     }
-                    displayedMessageCount = messages.length;
-                    renderMessages(false);
+                    if (typeof renderMessagesAround !== 'function' || !renderMessagesAround(messageId, 60)) {
+                        if (typeof showNotification === 'function') showNotification('消息暂时无法定位', 'warning');
+                        resolve(false);
+                        return;
+                    }
                     requestAnimationFrame(() => {
                         const target = Array.from(DOMElements.chatContainer.querySelectorAll('.message-wrapper,[data-id]')).find(node => String(node.dataset.id || node.dataset.msgId) === String(messageId));
                         if (!target) {

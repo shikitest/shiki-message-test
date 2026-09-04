@@ -13,6 +13,8 @@
     let isCreatingConversation = false;
     let createTransactions = 0;
     let reloadRequests = 0;
+    const conversationRowCache = new Map();
+    let avatarRenderVersion = 0;
 
     const features = [
         { id: 'watch-together', title: '共同观影', icon: 'fa-film' },
@@ -26,16 +28,14 @@
     ];
 
     const settingsEntries = [
-        { id: 'profile', title: '个人与角色资料', icon: 'fa-user-pen', target: 'chat-settings' },
-        { id: 'sessions', title: '会话管理', icon: 'fa-comments', target: 'session-manager-btn' },
-        { id: 'group', title: '群聊设置', icon: 'fa-users', target: 'group-chat-btn' },
-        { id: 'replies', title: '字卡与回复生成', icon: 'fa-message', target: 'custom-replies-function' },
-        { id: 'ime', title: 'IME 自定义词典', icon: 'fa-keyboard', target: 'ime-custom-lexicon-function' },
-        { id: 'translation', title: '翻译、主动消息与聊天选项', icon: 'fa-language', target: 'chat-settings' },
-        { id: 'media', title: '图片、照片与音乐', icon: 'fa-photo-film', target: 'advanced-settings' },
-        { id: 'appearance', title: '主题、背景与外观', icon: 'fa-palette', target: 'appearance-settings' },
-        { id: 'data', title: '数据备份与恢复', icon: 'fa-database', target: 'data-settings' },
-        { id: 'advanced', title: '高级功能', icon: 'fa-sliders', target: 'advanced-settings' }
+        { id: 'profile', title: '资料、翻译与聊天选项', icon: 'fa-user-pen', target: 'chat-settings', scope: 'conversation' },
+        { id: 'sessions', title: '会话管理', icon: 'fa-comments', target: 'session-manager-btn', scope: 'global' },
+        { id: 'group', title: '当前群聊设置', icon: 'fa-users', target: 'group-chat-btn', scope: 'conversation' },
+        { id: 'replies', title: '字卡与回复生成', icon: 'fa-message', target: 'custom-replies-function', scope: 'conversation' },
+        { id: 'ime', title: 'IME 自定义词典', icon: 'fa-keyboard', target: 'ime-custom-lexicon-function', scope: 'global' },
+        { id: 'appearance', title: '主题、背景与外观', icon: 'fa-palette', target: 'appearance-settings', scope: 'conversation' },
+        { id: 'data', title: '数据备份与恢复', icon: 'fa-database', target: 'data-settings', scope: 'global' },
+        { id: 'advanced', title: '媒体与高级功能', icon: 'fa-sliders', target: 'advanced-settings', scope: 'conversation' }
     ];
 
     function el(tag, className, text) {
@@ -188,29 +188,95 @@
         });
     }
 
+    function setAvatarFallback(avatar, type) {
+        if (avatar.querySelector('img')) return;
+        avatar.replaceChildren(el('i', 'fas ' + (type === 'group' ? 'fa-users' : 'fa-user')));
+    }
+
     function renderAvatar(avatar, session, meta) {
-        const icon = el('i', 'fas ' + (meta.type === 'group' ? 'fa-users' : 'fa-user'));
-        avatar.replaceChildren(icon);
+        const sessionId = String(session.id);
+        const currentId = String(context.getCurrentSessionId());
+        const currentAvatar = meta.type === 'direct' && sessionId === currentId
+            ? document.querySelector('#partner-avatar img')
+            : null;
+        const legacySrc = currentAvatar && currentAvatar.src ? currentAvatar.src : '';
+        const avatarKey = meta.avatarRef ? 'custom:' + sessionId + ':' + meta.avatarRef : 'legacy:' + legacySrc + ':' + meta.type;
+        if (avatar.dataset.avatarKey === avatarKey) return;
+        avatar.dataset.avatarKey = avatarKey;
+        const version = String(++avatarRenderVersion);
+        avatar.dataset.avatarVersion = version;
         if (!meta.avatarRef) {
-            if (meta.type === 'direct' && String(session.id) === String(context.getCurrentSessionId())) {
-                const currentAvatar = document.querySelector('#partner-avatar img');
-                if (currentAvatar && currentAvatar.src) {
-                    const image = el('img');
-                    image.src = currentAvatar.src;
-                    image.alt = '';
-                    avatar.replaceChildren(image);
-                }
+            if (legacySrc) {
+                const image = el('img');
+                image.src = legacySrc;
+                image.alt = '';
+                image.decoding = 'async';
+                avatar.replaceChildren(image);
+            } else {
+                setAvatarFallback(avatar, meta.type);
             }
             return;
         }
-        if (!global.ConversationAvatarStore) return;
-        global.ConversationAvatarStore.getObjectUrl(session.id).then(function (url) {
-            if (!url || !avatar.isConnected || avatar.closest('[data-session-id]')?.dataset.sessionId !== String(session.id)) return;
+        if (!global.ConversationAvatarStore) return setAvatarFallback(avatar, meta.type);
+        setAvatarFallback(avatar, meta.type);
+        global.ConversationAvatarStore.getObjectUrl(sessionId).then(function (url) {
+            if (!url || !avatar.isConnected || avatar.dataset.avatarVersion !== version || avatar.dataset.avatarKey !== avatarKey) return;
+            if (avatar.closest('[data-session-id]')?.dataset.sessionId !== sessionId) return;
             const image = el('img');
-            image.src = url;
             image.alt = '';
-            avatar.replaceChildren(image);
-        }).catch(function () {});
+            image.decoding = 'async';
+            image.addEventListener('load', function () {
+                if (avatar.isConnected && avatar.dataset.avatarVersion === version && avatar.dataset.avatarKey === avatarKey) {
+                    avatar.replaceChildren(image);
+                }
+            }, { once: true });
+            image.addEventListener('error', function () { setAvatarFallback(avatar, meta.type); }, { once: true });
+            image.src = url;
+            if (image.complete && image.naturalWidth > 0) image.dispatchEvent(new Event('load'));
+        }).catch(function (error) {
+            console.warn('[AppShell] 会话头像读取失败:', error);
+            if (avatar.dataset.avatarVersion === version) setAvatarFallback(avatar, meta.type);
+        });
+    }
+
+    function updateConversationRow(item, row) {
+        const session = row.session;
+        const meta = row.meta;
+        item.dataset.sessionId = String(session.id);
+        renderAvatar(item.querySelector('.shiki-conversation-avatar'), session, meta);
+        item.querySelector('.shiki-conversation-name').textContent = session.name || '未命名会话';
+        item.querySelector('.shiki-conversation-type').textContent = meta.type === 'group' ? '群聊' : '单聊';
+        const legacy = item.querySelector('.shiki-legacy-badge');
+        legacy.hidden = !meta.legacyGroup;
+        item.querySelector('.shiki-conversation-preview').textContent = meta.lastMessagePreview || '已有会话';
+        item.querySelector('time').textContent = formatDate(meta.lastMessageAt || meta.updatedAt || session.createdAt);
+        const pin = item.querySelector('.shiki-pin-button');
+        pin.dataset.sessionId = String(session.id);
+        pin.classList.toggle('active', Boolean(meta.pinned));
+        pin.setAttribute('aria-label', meta.pinned ? '取消置顶' : '置顶');
+    }
+
+    function createConversationRow(row) {
+        const item = el('div', 'shiki-conversation-row');
+        item.dataset.action = 'open-session';
+        item.setAttribute('role', 'button');
+        item.tabIndex = 0;
+        const avatar = el('span', 'shiki-conversation-avatar');
+        const body = el('span', 'shiki-conversation-body');
+        const titleLine = el('span', 'shiki-conversation-title-line');
+        titleLine.append(el('strong', 'shiki-conversation-name'), el('small', 'shiki-conversation-type'));
+        const legacy = el('small', 'shiki-legacy-badge', '旧群聊');
+        legacy.hidden = true;
+        titleLine.appendChild(legacy);
+        body.append(titleLine, el('span', 'shiki-conversation-preview'));
+        const side = el('span', 'shiki-conversation-side');
+        side.appendChild(el('time'));
+        const pin = button('', 'toggle-pin', 'fa-thumbtack');
+        pin.className = 'shiki-pin-button';
+        side.appendChild(pin);
+        item.append(avatar, body, side);
+        updateConversationRow(item, row);
+        return item;
     }
 
     function renderConversations(query) {
@@ -228,44 +294,45 @@
             const bTime = b.meta.lastMessageAt || b.meta.updatedAt || b.session.createdAt || 0;
             return bTime - aTime || a.index - b.index;
         });
-        list.replaceChildren();
+        const liveSessionIds = new Set(getSessions().map(function (session) { return String(session.id); }));
+        conversationRowCache.forEach(function (node, id) {
+            if (!liveSessionIds.has(id)) {
+                node.remove();
+                conversationRowCache.delete(id);
+            }
+        });
         if (!rows.length) {
-            const empty = el('div', 'shiki-conversation-empty');
-            empty.append(el('i', 'far fa-comments'), el('strong', '', normalizedQuery ? '没有匹配的会话' : '还没有会话'));
-            empty.appendChild(el('span', '', normalizedQuery ? '换个名称试试' : '点击右上角新建会话'));
-            list.appendChild(empty);
+            let empty = list.querySelector('.shiki-conversation-empty');
+            if (!empty) {
+                empty = el('div', 'shiki-conversation-empty');
+                empty.append(el('i', 'far fa-comments'), el('strong'), el('span'));
+            }
+            empty.querySelector('strong').textContent = normalizedQuery ? '没有匹配的会话' : '还没有会话';
+            empty.querySelector('span').textContent = normalizedQuery ? '换个名称试试' : '点击右上角新建会话';
+            list.replaceChildren(empty);
             return;
         }
+        const fragment = document.createDocumentFragment();
         rows.forEach(function (row) {
-            const session = row.session;
-            const meta = row.meta;
-            const item = el('div', 'shiki-conversation-row');
-            item.dataset.action = 'open-session';
-            item.dataset.sessionId = String(session.id);
-            item.setAttribute('role', 'button');
-            item.tabIndex = 0;
-            const avatar = el('span', 'shiki-conversation-avatar');
-            renderAvatar(avatar, session, meta);
-            const body = el('span', 'shiki-conversation-body');
-            const titleLine = el('span', 'shiki-conversation-title-line');
-            titleLine.append(el('strong', '', session.name || '未命名会话'));
-            titleLine.appendChild(el('small', 'shiki-conversation-type', meta.type === 'group' ? '群聊' : '单聊'));
-            if (meta.legacyGroup) titleLine.appendChild(el('small', 'shiki-legacy-badge', '旧群聊'));
-            const preview = meta.lastMessagePreview || '已有会话';
-            body.append(titleLine, el('span', 'shiki-conversation-preview', preview));
-            const side = el('span', 'shiki-conversation-side');
-            side.appendChild(el('time', '', formatDate(meta.lastMessageAt || meta.updatedAt || session.createdAt)));
-            const pin = button(meta.pinned ? '取消置顶' : '置顶', 'toggle-pin', meta.pinned ? 'fa-thumbtack' : 'fa-thumbtack');
-            pin.className = 'shiki-pin-button' + (meta.pinned ? ' active' : '');
-            pin.dataset.sessionId = String(session.id);
-            side.appendChild(pin);
-            item.append(avatar, body, side);
-            list.appendChild(item);
+            const id = String(row.session.id);
+            let item = conversationRowCache.get(id);
+            if (!item) {
+                item = createConversationRow(row);
+                conversationRowCache.set(id, item);
+            } else updateConversationRow(item, row);
+            fragment.appendChild(item);
         });
+        list.replaceChildren(fragment);
     }
 
     function showPrimary(viewName) {
         if (!root) return;
+        if (document.body.classList.contains('shiki-chat-view-active') && typeof global.saveDataForSession === 'function') {
+            Promise.resolve(global.saveDataForSession(context.getCurrentSessionId())).catch(function (error) {
+                console.warn('[AppShell] 返回主页前保存失败:', error);
+                notify('部分设置尚未保存，请稍后重试', 'warning');
+            });
+        }
         activeView = viewName || 'conversations';
         root.hidden = false;
         root.setAttribute('aria-hidden', 'false');
@@ -344,13 +411,28 @@
         } catch (error) { return null; }
     }
 
-    function requestSessionReload(sessionId, groupSetup, reason) {
+    async function requestSessionReload(sessionId, groupSetup, reason) {
+        const currentSessionId = context.getCurrentSessionId();
+        if (currentSessionId && typeof global.saveDataForSession === 'function') {
+            try {
+                const saveResult = await global.saveDataForSession(currentSessionId);
+                if (saveResult && Array.isArray(saveResult.failed) && saveResult.failed.length) {
+                    throw new Error('Failed storage groups: ' + saveResult.failed.join(', '));
+                }
+                if (typeof global.flushPendingSessionSaves === 'function') await global.flushPendingSessionSaves();
+            } catch (error) {
+                console.warn('[AppShell] 切换会话前保存失败:', error);
+                notify('当前会话保存失败，请重试后再切换', 'error');
+                return false;
+            }
+        }
         if (!queueNavigation(sessionId, groupSetup, reason)) {
             notify('浏览器无法保存页面切换状态，刷新后请再次点击会话', 'warning');
         }
         reloadRequests += 1;
         window.location.hash = String(sessionId);
         window.location.reload();
+        return true;
     }
 
     function notify(message, type) {

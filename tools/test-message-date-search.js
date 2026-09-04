@@ -46,4 +46,11 @@ const elapsed = performance.now() - started;
 assert(Object.keys(largeIndex).length > 1);
 assert(elapsed < 1000, '5000-message date index should stay lightweight');
 
-console.log(JSON.stringify({ passed: true, messages: large.length, dateIndexMs: Number(elapsed.toFixed(2)), indexedDays: Object.keys(largeIndex).length }, null, 2));
+const veryLarge = Array.from({ length: 20000 }, (_, i) => ({ id: 'large-' + i, timestamp: Date.now() - i * 1800000 }));
+const veryLargeStarted = performance.now();
+const veryLargeIndex = api.buildDateIndex(veryLarge);
+const veryLargeElapsed = performance.now() - veryLargeStarted;
+assert(Object.keys(veryLargeIndex).length > 1);
+assert(veryLargeElapsed < 2000, '20000-message date index should stay lightweight');
+
+console.log(JSON.stringify({ passed: true, messages: veryLarge.length, dateIndexMs: Number(veryLargeElapsed.toFixed(2)), indexedDays: Object.keys(veryLargeIndex).length }, null, 2));

@@ -44,6 +44,8 @@
             // 立即清除 localStorage 备份，防止 _tryRecoverFromBackup 在 IndexedDB 写入前恢复旧消息
             try { localStorage.removeItem('BACKUP_V1_critical'); } catch(e) {}
             try { localStorage.removeItem('BACKUP_V1_timestamp'); } catch(e) {}
+            try { localStorage.removeItem('BACKUP_V1_critical:' + SESSION_ID); } catch(e) {}
+            try { localStorage.removeItem('BACKUP_V1_timestamp:' + SESSION_ID); } catch(e) {}
 
             // 直接写入 IndexedDB（跳过 500ms 防抖），确保刷新后不恢复
             localforage.setItem(getStorageKey('chatMessages'), []).catch(() => {});
@@ -84,6 +86,12 @@
 function loadMoreHistory() {
     const historyLoader = document.getElementById('history-loader');
     const container = DOMElements && DOMElements.chatContainer;
+    const locatedWindow = window._shikiMessageRenderWindow;
+    if (locatedWindow && Number.isInteger(locatedWindow.start) && locatedWindow.start > 0) {
+        locatedWindow.start = Math.max(0, locatedWindow.start - HISTORY_BATCH_SIZE);
+        renderMessages(true);
+        return;
+    }
     const currentOldestMsgIndex = messages.length - displayedMessageCount;
 
     if (!container) return;
@@ -582,38 +590,19 @@ const _BACKUP_PREFIX = 'BACKUP_V1_';
 function _backupCriticalData() {
     if (window._skipBackup) return;
     try {
+        const sessionId = String(SESSION_ID || '');
+        if (!sessionId) return;
         const backupPayload = {
             ts: Date.now(),
-            messages: messages,
-            settings: settings,
-            sessionId: SESSION_ID,
-            anniversaries: anniversaries
+            messages: Array.isArray(messages) ? messages.slice(-50) : [],
+            settings: Object.assign({}, settings),
+            sessionId: sessionId,
+            anniversaries: Array.isArray(anniversaries) ? anniversaries.slice() : [],
+            _truncated: Array.isArray(messages) && messages.length > 50
         };
-
-        let payloadToStore = backupPayload;
-        const msgSizeEstimate = messages.length * 500; 
-        if (msgSizeEstimate > 3 * 1024 * 1024) {
-            payloadToStore = {
-                ...backupPayload,
-                messages: messages.slice(-200),
-                _truncated: true
-            };
-        }
-
-        const json = JSON.stringify(payloadToStore);
-
-        if (json.length > 4.5 * 1024 * 1024) {
-            const smallerPayload = {
-                ...payloadToStore,
-                messages: messages.slice(-50),
-                _truncated: true
-            };
-            const smallerJson = JSON.stringify(smallerPayload);
-            localStorage.setItem(_BACKUP_PREFIX + 'critical', smallerJson);
-        } else {
-            localStorage.setItem(_BACKUP_PREFIX + 'critical', json);
-        }
-        localStorage.setItem(_BACKUP_PREFIX + 'timestamp', String(Date.now()));
+        const json = JSON.stringify(backupPayload);
+        localStorage.setItem(_BACKUP_PREFIX + 'critical:' + sessionId, json);
+        localStorage.setItem(_BACKUP_PREFIX + 'timestamp:' + sessionId, String(Date.now()));
     } catch (e) {
         console.warn('localStorage 备份写入失败（可能存储已满）:', e);
     }
@@ -621,62 +610,90 @@ function _backupCriticalData() {
 
 function _tryRecoverFromBackup() {
     try {
-        const raw = localStorage.getItem(_BACKUP_PREFIX + 'critical');
+        const sessionId = String(SESSION_ID || '');
+        const raw = localStorage.getItem(_BACKUP_PREFIX + 'critical:' + sessionId) ||
+            localStorage.getItem(_BACKUP_PREFIX + 'critical');
         if (!raw) return null;
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.sessionId && String(parsed.sessionId) !== sessionId) return null;
+        return parsed;
     } catch (e) {
         return null;
     }
 }
 
-const saveData = async () => {
-    if (!SESSION_ID) {
+const _sessionSaveQueues = new Map();
+
+const saveData = (sessionIdOverride) => {
+    const targetSessionId = String(sessionIdOverride || SESSION_ID || '');
+    if (!targetSessionId) {
         console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存以防数据写入临时 key');
-        return;
+        return Promise.resolve({ failed: ['sessionId'] });
     }
 
-    const promises = [
-        { key: 'chatSettings',           val: () => localforage.setItem(getStorageKey('chatSettings'), settings) },
-        { key: 'customReplies',          val: () => localforage.setItem(getStorageKey('customReplies'), customReplies) },
-        { key: 'customReplyGroups',      val: () => localforage.setItem(getStorageKey('customReplyGroups'), window.customReplyGroups || []) },
-        { key: 'customPokeGroups',        val: () => localforage.setItem(getStorageKey('customPokeGroups'), window.customPokeGroups || []) },
-        { key: 'customStatusGroups',      val: () => localforage.setItem(getStorageKey('customStatusGroups'), window.customStatusGroups || []) },
-        { key: 'customEmojis',           val: () => localforage.setItem(getStorageKey('customEmojis'), customEmojis) },
-        { key: 'anniversaries',          val: () => localforage.setItem(getStorageKey('anniversaries'), anniversaries) },
-        { key: 'customPokes',            val: () => localforage.setItem(getStorageKey('customPokes'), customPokes) },
-        { key: 'customStatuses',         val: () => localforage.setItem(getStorageKey('customStatuses'), customStatuses) },
-        { key: 'customMottos',           val: () => localforage.setItem(getStorageKey('customMottos'), customMottos) },
-        { key: 'customIntros',           val: () => localforage.setItem(getStorageKey('customIntros'), customIntros) },
-        { key: 'stickerLibrary',         val: () => localforage.setItem(getStorageKey('stickerLibrary'), stickerLibrary) },
-        { key: 'myStickerLibrary',       val: () => localforage.setItem(getStorageKey('myStickerLibrary'), myStickerLibrary) },
-        { key: 'customThemes',           val: () => localforage.setItem(`${APP_PREFIX}customThemes`, customThemes) },
-        { key: 'themeSchemes',           val: () => localforage.setItem(`${APP_PREFIX}themeSchemes`, themeSchemes) },
-        { key: 'chatMessages',           val: () => localforage.setItem(getStorageKey('chatMessages'), messages) },
-    ];
-
-    const partnerAvatarSrc = (() => {
+    const sessionKey = key => `${APP_PREFIX}${targetSessionId}_${key}`;
+    const saveSnapshot = {
+        settings: Object.assign({}, settings),
+        customReplies: Array.isArray(customReplies) ? customReplies.slice() : [],
+        customReplyGroups: Array.isArray(window.customReplyGroups) ? window.customReplyGroups.slice() : [],
+        customPokeGroups: Array.isArray(window.customPokeGroups) ? window.customPokeGroups.slice() : [],
+        customStatusGroups: Array.isArray(window.customStatusGroups) ? window.customStatusGroups.slice() : [],
+        customEmojis: Array.isArray(customEmojis) ? customEmojis.slice() : [],
+        anniversaries: Array.isArray(anniversaries) ? anniversaries.slice() : [],
+        customPokes: Array.isArray(customPokes) ? customPokes.slice() : [],
+        customStatuses: Array.isArray(customStatuses) ? customStatuses.slice() : [],
+        customMottos: Array.isArray(customMottos) ? customMottos.slice() : [],
+        customIntros: Array.isArray(customIntros) ? customIntros.slice() : [],
+        stickerLibrary: Array.isArray(stickerLibrary) ? stickerLibrary.slice() : [],
+        myStickerLibrary: Array.isArray(myStickerLibrary) ? myStickerLibrary.slice() : [],
+        messages: Array.isArray(messages) ? messages.slice() : []
+    };
+    saveSnapshot.partnerAvatarSrc = (() => {
         try {
             const img = DOMElements.partner.avatar.querySelector('img');
             return img ? img.src : null;
         } catch(e) { return null; }
     })();
-    const myAvatarSrc = (() => {
+    saveSnapshot.myAvatarSrc = (() => {
         try {
             const img = DOMElements.me.avatar.querySelector('img');
             return img ? img.src : null;
         } catch(e) { return null; }
     })();
+    const performSave = async () => {
+
+    const promises = [
+        { key: 'chatSettings',           val: () => localforage.setItem(sessionKey('chatSettings'), saveSnapshot.settings) },
+        { key: 'customReplies',          val: () => localforage.setItem(sessionKey('customReplies'), saveSnapshot.customReplies) },
+        { key: 'customReplyGroups',      val: () => localforage.setItem(sessionKey('customReplyGroups'), saveSnapshot.customReplyGroups) },
+        { key: 'customPokeGroups',        val: () => localforage.setItem(sessionKey('customPokeGroups'), saveSnapshot.customPokeGroups) },
+        { key: 'customStatusGroups',      val: () => localforage.setItem(sessionKey('customStatusGroups'), saveSnapshot.customStatusGroups) },
+        { key: 'customEmojis',           val: () => localforage.setItem(sessionKey('customEmojis'), saveSnapshot.customEmojis) },
+        { key: 'anniversaries',          val: () => localforage.setItem(sessionKey('anniversaries'), saveSnapshot.anniversaries) },
+        { key: 'customPokes',            val: () => localforage.setItem(sessionKey('customPokes'), saveSnapshot.customPokes) },
+        { key: 'customStatuses',         val: () => localforage.setItem(sessionKey('customStatuses'), saveSnapshot.customStatuses) },
+        { key: 'customMottos',           val: () => localforage.setItem(sessionKey('customMottos'), saveSnapshot.customMottos) },
+        { key: 'customIntros',           val: () => localforage.setItem(sessionKey('customIntros'), saveSnapshot.customIntros) },
+        { key: 'stickerLibrary',         val: () => localforage.setItem(sessionKey('stickerLibrary'), saveSnapshot.stickerLibrary) },
+        { key: 'myStickerLibrary',       val: () => localforage.setItem(sessionKey('myStickerLibrary'), saveSnapshot.myStickerLibrary) },
+        { key: 'customThemes',           val: () => localforage.setItem(`${APP_PREFIX}customThemes`, customThemes) },
+        { key: 'themeSchemes',           val: () => localforage.setItem(`${APP_PREFIX}themeSchemes`, themeSchemes) },
+        { key: 'chatMessages',           val: () => localforage.setItem(sessionKey('chatMessages'), saveSnapshot.messages) },
+    ];
+
+    const partnerAvatarSrc = saveSnapshot.partnerAvatarSrc;
+    const myAvatarSrc = saveSnapshot.myAvatarSrc;
 
     if (partnerAvatarSrc) {
-        promises.push({ key: 'partnerAvatar', val: () => localforage.setItem(getStorageKey('partnerAvatar'), partnerAvatarSrc) });
+        promises.push({ key: 'partnerAvatar', val: () => localforage.setItem(sessionKey('partnerAvatar'), partnerAvatarSrc) });
     } else {
-        promises.push({ key: 'partnerAvatar', val: () => localforage.removeItem(getStorageKey('partnerAvatar')) });
+        promises.push({ key: 'partnerAvatar', val: () => localforage.removeItem(sessionKey('partnerAvatar')) });
     }
 
     if (myAvatarSrc) {
-        promises.push({ key: 'myAvatar', val: () => localforage.setItem(getStorageKey('myAvatar'), myAvatarSrc) });
+        promises.push({ key: 'myAvatar', val: () => localforage.setItem(sessionKey('myAvatar'), myAvatarSrc) });
     } else {
-        promises.push({ key: 'myAvatar', val: () => localforage.removeItem(getStorageKey('myAvatar')) });
+        promises.push({ key: 'myAvatar', val: () => localforage.removeItem(sessionKey('myAvatar')) });
     }
 
     const results = await Promise.allSettled(promises.map(p => {
@@ -696,9 +713,23 @@ const saveData = async () => {
         console.warn(`[saveData] ${failed.length} 项写入失败，已触发 localStorage 降级备份`, failed);
     }
 
-    _backupCriticalData();
+    if (String(SESSION_ID || '') === targetSessionId) _backupCriticalData();
     return { failed };
+    };
+
+    const previous = _sessionSaveQueues.get(targetSessionId) || Promise.resolve();
+    const queued = previous.catch(() => {}).then(performSave);
+    _sessionSaveQueues.set(targetSessionId, queued);
+    queued.then(() => {
+        if (_sessionSaveQueues.get(targetSessionId) === queued) _sessionSaveQueues.delete(targetSessionId);
+    }, () => {
+        if (_sessionSaveQueues.get(targetSessionId) === queued) _sessionSaveQueues.delete(targetSessionId);
+    });
+    return queued;
 };
+
+window.flushPendingSessionSaves = () => Promise.allSettled(Array.from(_sessionSaveQueues.values()));
+window.saveDataForSession = sessionId => saveData(sessionId);
 
         function initializeRandomUI() {
 
@@ -1315,8 +1346,11 @@ function _updateReadReceiptsDOM() {
 function renderMessages(preserveScroll = false) {
     const container = DOMElements.chatContainer;
     const totalMessages = messages.length;
-    const startIndex = Math.max(0, totalMessages - displayedMessageCount);
-    const msgsToRender = messages.slice(startIndex);
+    const locatedWindow = window._shikiMessageRenderWindow;
+    const hasWindow = locatedWindow && Number.isInteger(locatedWindow.start) && Number.isInteger(locatedWindow.end);
+    const startIndex = hasWindow ? Math.max(0, locatedWindow.start) : Math.max(0, totalMessages - displayedMessageCount);
+    const endIndex = hasWindow ? Math.min(totalMessages, locatedWindow.end) : totalMessages;
+    const msgsToRender = messages.slice(startIndex, endIndex);
 
     const historyLoader = document.getElementById('history-loader');
     if (historyLoader) {
@@ -1357,6 +1391,19 @@ function renderMessages(preserveScroll = false) {
     }
 }
 
+function renderMessagesAround(messageId, radius = 60) {
+    const index = messages.findIndex(message => String(message.id) === String(messageId));
+    if (index < 0) return false;
+    const safeRadius = Math.max(20, Math.min(100, Number(radius) || 60));
+    window._shikiMessageRenderWindow = {
+        start: Math.max(0, index - safeRadius),
+        end: Math.min(messages.length, index + safeRadius + 1),
+        targetIndex: index
+    };
+    renderMessages(false);
+    return true;
+}
+
 const addMessage = (message) => {
     if (!(message.timestamp instanceof Date)) message.timestamp = new Date(message.timestamp);
     
@@ -1375,6 +1422,19 @@ const addMessage = (message) => {
     
     if (wasEmpty) {
         DOMElements.emptyState.style.display = 'none';
+    }
+
+    if (window._shikiMessageRenderWindow) {
+        window._shikiMessageRenderWindow = null;
+        displayedMessageCount = HISTORY_BATCH_SIZE;
+        renderMessages(false);
+        throttledSaveData(saveResult => {
+            if (saveResult && Array.isArray(saveResult.failed) && saveResult.failed.includes('chatMessages')) return;
+            if (window.ShikiAppShell && typeof window.ShikiAppShell.noteMessageSaved === 'function') {
+                window.ShikiAppShell.noteMessageSaved(message);
+            }
+        });
+        return;
     }
 
     // --- Update previous message if needed ---

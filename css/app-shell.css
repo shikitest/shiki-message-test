@@ -134,9 +134,12 @@ body.shiki-primary-view-active .input-area-wrapper {
 .shiki-conversation-avatar {
     width: 50px;
     height: 50px;
+    aspect-ratio: 1;
+    flex: 0 0 50px;
     border-radius: 16px;
     display: grid;
     place-items: center;
+    overflow: hidden;
     color: #fff;
     background: var(--shell-accent);
     font-size: 19px;
@@ -253,6 +256,8 @@ body.shiki-primary-view-active .input-area-wrapper {
     cursor: pointer;
 }
 .shiki-chat-avatar, .shiki-detail-avatar {
+    aspect-ratio: 1;
+    flex: 0 0 auto;
     display: grid;
     place-items: center;
     overflow: hidden;
@@ -260,7 +265,7 @@ body.shiki-primary-view-active .input-area-wrapper {
     background: var(--shell-accent);
 }
 .shiki-chat-avatar { width: 40px; height: 40px; border-radius: 13px; }
-.shiki-chat-avatar img, .shiki-detail-avatar img, .shiki-conversation-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.shiki-chat-avatar img, .shiki-detail-avatar img, .shiki-conversation-avatar img { display:block; width:100%; height:100%; aspect-ratio:1; object-fit:cover; }
 .shiki-chat-heading { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .shiki-chat-title, .shiki-chat-subtitle { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .shiki-chat-title { font-size: 15px; }
@@ -298,6 +303,9 @@ body.shiki-primary-view-active .input-area-wrapper {
 }
 .shiki-record-header h2 { margin: 0; text-align: center; font-size: 18px; }
 .shiki-record-header > :last-child { color: var(--shell-accent); font-size: 12px; }
+.shiki-calendar-month-picker { position:relative; display:grid; place-items:center; cursor:pointer; }
+.shiki-calendar-month-picker input { position:absolute; inset:0; width:100%; opacity:0; cursor:pointer; }
+.shiki-calendar-nav button:disabled { opacity:.28; pointer-events:none; }
 
 .shiki-detail-profile { padding: 28px 18px 22px; display: flex; flex-direction: column; align-items: center; gap: 8px; background: var(--shell-surface); }
 .shiki-detail-avatar { width: 78px; height: 78px; margin-bottom: 5px; border-radius: 24px; font-size: 26px; }
@@ -334,7 +342,21 @@ body.shiki-primary-view-active .input-area-wrapper {
 .shiki-search-context { display:flex; flex-direction:column; gap:3px; padding:7px 9px; border-radius:8px; background:var(--shell-muted); color:var(--shell-secondary); font-size:11px; line-height:1.4; overflow:hidden; }
 .shiki-search-context small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .shiki-search-thumbnail { width:74px; height:58px; object-fit:cover; border-radius:8px; background:var(--shell-muted); }
-.shiki-watch-page { overflow-y:auto; background:var(--shell-bg); }
+.shiki-watch-page {
+    position: fixed;
+    inset: 0;
+    z-index: 1400;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    overflow-y: auto;
+    background: var(--shell-surface, #fff);
+    isolation: isolate;
+}
+body.shiki-record-page-active .shiki-shell-nav,
+body.shiki-record-page-active .input-area-wrapper,
+body.shiki-record-page-active #player,
+body.shiki-record-page-active #playlist { visibility:hidden !important; pointer-events:none !important; }
 .shiki-watch-heading { padding:16px; display:flex; flex-direction:column; gap:4px; background:var(--shell-surface); }
 .shiki-watch-heading small { color:var(--shell-secondary); }
 .shiki-watch-player { margin:14px; padding:10px; border-radius:14px; background:#111; color:#fff; }
