@@ -6,6 +6,8 @@
     let video = null;
     let localInput = null;
     let importInput = null;
+    let localMedia = null;
+    let danmaku = null;
     let messages = [];
     let state = null;
     let playlist = { currentItemId: null, items: [] };
@@ -131,6 +133,40 @@
         return { memberId: null, senderName: context && context.getPartnerName ? context.getPartnerName() : '对方' };
     }
 
+    function createSenderOptions(senderContext) {
+        const result = [{ value: 'user', senderType: 'user', memberId: null,
+            senderName: senderContext && senderContext.getMyName ? senderContext.getMyName() : '我' }];
+        const members = senderContext && senderContext.getGroupMembers ? senderContext.getGroupMembers() : [];
+        if (Array.isArray(members) && members.length) {
+            members.forEach(function (member) {
+                if (!member || !member.id) return;
+                result.push({ value: 'member:' + member.id, senderType: 'partner',
+                    memberId: member.id, senderName: member.name || '群成员' });
+            });
+        } else {
+            result.push({ value: 'partner', senderType: 'partner', memberId: null,
+                senderName: senderContext && senderContext.getPartnerName ? senderContext.getPartnerName() : '对方' });
+        }
+        return result;
+    }
+
+    function availableSenders() { return createSenderOptions(context); }
+
+    function renderSenderOptions() {
+        const select = page && page.querySelector('.shiki-watch-sender-select');
+        if (!select) return;
+        const selected = select.value;
+        select.replaceChildren();
+        availableSenders().forEach(function (sender) {
+            const option = make('option', '', sender.senderType === 'user' ? '我' : sender.senderName);
+            option.value = sender.value;
+            select.appendChild(option);
+        });
+        if (Array.from(select.options).some(function (option) { return option.value === selected; })) {
+            select.value = selected;
+        }
+    }
+
     function generateBlindText() {
         if (typeof global.chooseReplyText === 'function') {
             const choice = global.chooseReplyText(Array.isArray(global._customReplies) ? global._customReplies.slice() : []);
@@ -146,14 +182,24 @@
     async function appendInteraction(entry) {
         const session = currentSession();
         if (!session || !global.WatchTogetherStore) return;
-        messages.push(Object.assign({
+        const message = Object.assign({
             id: 'watch_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
             createdAt: Date.now(),
             playbackTime: video ? video.currentTime || 0 : 0
-        }, entry));
+        }, entry);
+        messages.push(message);
         messages = messages.slice(-global.WatchTogetherStore.maxMessages);
-        await global.WatchTogetherStore.saveMessages(session.id, messages);
         renderMessages();
+        if (danmaku) {
+            danmaku.setMessages(messages);
+            danmaku.immediate(message);
+        }
+        try {
+            await global.WatchTogetherStore.saveMessages(session.id, messages);
+        } catch (error) {
+            console.warn('[WatchTogether] 留言保存失败:', error);
+            notify('观影留言保存失败，刷新后可能丢失', 'warning');
+        }
     }
 
     function scheduleAutoInteraction() {
@@ -162,6 +208,7 @@
         const delay = 45000 + Math.floor(Math.random() * 75001);
         autoTimer = setTimeout(async function () {
             autoTimer = null;
+            if (!openState || !video || video.paused || video.ended) return;
             const partner = choosePartner();
             await appendInteraction({ senderType: 'partner', memberId: partner.memberId, senderName: partner.senderName, text: generateBlindText() });
             scheduleAutoInteraction();
@@ -246,6 +293,8 @@
             const file = localFiles.get(item.id);
             if (!file) {
                 video.pause();
+                if (danmaku) danmaku.clear();
+                if (localMedia) localMedia.clear();
                 revokeObjectUrl();
                 video.removeAttribute('src');
                 video.load();
@@ -297,6 +346,8 @@
         playlist.items.splice(index, 1);
         if (wasCurrent) {
             video.pause();
+            if (danmaku) danmaku.clear();
+            if (localMedia) localMedia.clear();
             revokeObjectUrl();
             video.removeAttribute('src');
             video.load();
@@ -312,6 +363,8 @@
         if (!playlist.items.length) return;
         if (!global.confirm('确定清空当前会话的观影播放列表吗？')) return;
         video.pause();
+        if (danmaku) danmaku.clear();
+        if (localMedia) localMedia.clear();
         revokeObjectUrl();
         video.removeAttribute('src');
         video.load();
@@ -368,7 +421,9 @@
             await global.WatchTogetherStore.applyImport(session.id, payload);
             playlist = clean.playlist;
             messages = clean.messages;
+            if (danmaku) { danmaku.clear(); danmaku.setMessages(messages, true); }
             localFiles.clear();
+            if (localMedia) localMedia.clear();
             revokeObjectUrl();
             video.pause();
             video.removeAttribute('src');
@@ -383,6 +438,8 @@
     }
 
     function setVideoSource(source, name, type, sourceAlreadyOwned) {
+        if (danmaku) danmaku.clear();
+        if (localMedia) localMedia.clear();
         if (!sourceAlreadyOwned) revokeObjectUrl();
         video.pause();
         video.removeAttribute('src');
@@ -400,10 +457,12 @@
         localInput.value = '';
         if (!files.length) return;
         const added = [];
+        let rejected = '';
         files.forEach(function (file) {
             if (playlist.items.length >= global.WatchTogetherStore.maxPlaylistItems) return;
+            const mediaError = global.WatchLocalMedia.videoError(file, video);
+            if (mediaError) { rejected = mediaError; return; }
             const type = String(file.type || '');
-            if (type && !type.startsWith('video/')) return;
             let item = playlist.items.find(function (candidate) {
                 return candidate.sourceType === 'local' && !localFiles.has(candidate.id) && candidate.name === file.name && Number(candidate.size) === Number(file.size);
             });
@@ -420,12 +479,14 @@
             item.needsFile = false;
             added.push(item);
         });
-        if (!added.length) return notify('请选择视频文件', 'warning');
-        if (added.length < files.length) notify('部分文件未加入：播放列表最多保存 ' + global.WatchTogetherStore.maxPlaylistItems + ' 条', 'warning');
+        if (rejected && localMedia) localMedia.showError(rejected);
+        if (!added.length) return notify(rejected || '请选择视频文件', 'warning');
+        if (added.length < files.length) notify(rejected || '部分文件未加入：播放列表最多保存 ' + global.WatchTogetherStore.maxPlaylistItems + ' 条', 'warning');
         if (!playlist.currentItemId) playlist.currentItemId = added[0].id;
         renderPlaylist();
         await saveNow();
         await playItem(added[0].id, true);
+        if (rejected && localMedia) localMedia.showError(rejected);
     }
 
     function useRemoteUrl() {
@@ -452,13 +513,18 @@
         const input = page.querySelector('.shiki-watch-input');
         const text = input.value.trim();
         if (!text) return;
+        const select = page.querySelector('.shiki-watch-sender-select');
+        const sender = availableSenders().find(function (item) { return item.value === select.value; }) || availableSenders()[0];
         input.value = '';
-        await appendInteraction({ senderType: 'user', memberId: null, senderName: context.getMyName ? context.getMyName() : '我', text: text });
+        await appendInteraction({ senderType: sender.senderType, memberId: sender.memberId,
+            senderName: sender.senderName, text: text });
     }
 
     function endWatching() {
         clearAutoTimer();
+        if (danmaku) danmaku.clear();
         video.pause();
+        if (localMedia) localMedia.clear();
         revokeObjectUrl();
         video.removeAttribute('src');
         video.load();
@@ -484,13 +550,13 @@
         page.innerHTML = [
             '<header class="shiki-record-header"><button type="button" data-watch-action="close" aria-label="返回"><i class="fas fa-chevron-left"></i></button><h2>共同观影</h2><button type="button" data-watch-action="end">结束</button></header>',
             '<div class="shiki-watch-heading"><strong class="shiki-watch-session"></strong><small>单设备本地模拟 · 不上传视频</small></div>',
-            '<div class="shiki-watch-player"><video controls playsinline webkit-playsinline preload="metadata"></video><div class="shiki-watch-video-name">未选择视频</div><div class="shiki-watch-time">0:00 / 0:00</div><div class="shiki-watch-skip"><button type="button" data-watch-action="previous"><i class="fas fa-step-backward"></i>上一条</button><button type="button" data-watch-action="next">下一条<i class="fas fa-step-forward"></i></button></div></div>',
+            '<div class="shiki-watch-player"><div class="shiki-watch-video-stage"><video controls playsinline webkit-playsinline preload="metadata"></video><div class="shiki-watch-danmaku-layer" aria-hidden="true"></div></div><div class="shiki-watch-video-name">未选择视频</div><div class="shiki-watch-time">0:00 / 0:00</div><div class="shiki-watch-skip"><button type="button" data-watch-action="previous"><i class="fas fa-step-backward"></i>上一条</button><button type="button" data-watch-action="next">下一条<i class="fas fa-step-forward"></i></button></div></div>',
             '<div class="shiki-watch-source-actions"><button type="button" data-watch-action="local"><i class="fas fa-folder-open"></i>选择本地视频</button><input class="shiki-watch-url" type="url" placeholder="可直接播放的 http/https 视频地址"><button type="button" data-watch-action="remote">打开直链</button><button type="button" data-watch-action="fullscreen"><i class="fas fa-expand"></i>全屏</button></div>',
             '<section class="shiki-watch-playlist-section"><div class="shiki-watch-section-title"><strong>播放列表</strong><button type="button" data-watch-action="clear-playlist">清空</button></div><div class="shiki-watch-playlist"></div></section>',
             '<div class="shiki-watch-record-actions"><button type="button" data-watch-action="export"><i class="fas fa-file-export"></i>导出观影记录</button><button type="button" data-watch-action="import"><i class="fas fa-file-import"></i>导入观影记录</button></div>',
             '<label class="shiki-watch-auto"><input type="checkbox" class="shiki-watch-auto-input"><span>随机观影互动（与视频内容无关）</span></label>',
             '<div class="shiki-watch-messages"></div>',
-            '<div class="shiki-watch-compose"><input class="shiki-watch-input" maxlength="500" placeholder="发送观影留言"><button type="button" data-watch-action="send">发送</button></div>'
+            '<div class="shiki-watch-compose"><select class="shiki-watch-sender-select" aria-label="发送身份"></select><input class="shiki-watch-input" maxlength="500" placeholder="发送观影留言"><button type="button" data-watch-action="send">发送</button></div>'
         ].join('');
         localInput = make('input');
         localInput.type = 'file';
@@ -505,6 +571,8 @@
         page.appendChild(importInput);
         document.body.appendChild(page);
         video = page.querySelector('video');
+        danmaku = global.WatchDanmaku.attach(page.querySelector('.shiki-watch-danmaku-layer'), video);
+        localMedia = global.WatchLocalMedia.attach(page, video);
         page.addEventListener('click', function (event) {
             const action = event.target.closest('[data-watch-action]');
             if (action) {
@@ -532,7 +600,8 @@
         });
         localInput.addEventListener('change', handleLocalFile);
         importInput.addEventListener('change', importRecord);
-        video.addEventListener('timeupdate', function () { updateTime(); scheduleSave(); });
+        video.addEventListener('timeupdate', function () { updateTime(); if (danmaku) danmaku.tick(); scheduleSave(); });
+        video.addEventListener('seeked', function () { if (danmaku) danmaku.seek(); });
         video.addEventListener('loadedmetadata', function () {
             const item = currentItem();
             const position = item ? item.lastPosition : (state && state.lastPosition);
@@ -541,10 +610,15 @@
             }
             updateTime();
         });
-        video.addEventListener('play', scheduleAutoInteraction);
-        video.addEventListener('pause', function () { clearAutoTimer(); saveNow(); });
-        video.addEventListener('ended', function () { clearAutoTimer(); if (playlist.items.length > 1) playAdjacent(1); });
-        video.addEventListener('error', function () { if (video.currentSrc) notify('视频无法播放，请检查格式或直链', 'warning'); });
+        video.addEventListener('play', function () { if (danmaku) danmaku.play(); scheduleAutoInteraction(); });
+        video.addEventListener('pause', function () { if (danmaku) danmaku.pause(); clearAutoTimer(); saveNow(); });
+        video.addEventListener('ended', function () { if (danmaku) danmaku.clear(); clearAutoTimer(); if (playlist.items.length > 1) playAdjacent(1); });
+        video.addEventListener('error', function () {
+            if (!video.currentSrc) return;
+            const message = '视频无法播放，可能是编码不受浏览器支持，请尝试 MP4 或 WebM';
+            if (localMedia) localMedia.showError(message);
+            notify(message, 'warning');
+        });
         video.addEventListener('volumechange', scheduleSave);
         page.querySelector('.shiki-watch-auto-input').addEventListener('change', function (event) {
             state.autoInteractionEnabled = event.target.checked;
@@ -554,7 +628,7 @@
         page.querySelector('.shiki-watch-input').addEventListener('keydown', function (event) {
             if (event.key === 'Enter') { event.preventDefault(); sendManual(); }
         });
-        global.addEventListener('pagehide', function () { clearAutoTimer(); revokeObjectUrl(); saveNow(); });
+        global.addEventListener('pagehide', function () { clearAutoTimer(); if (danmaku) danmaku.clear(); revokeObjectUrl(); saveNow(); });
         global.addEventListener('beforeunload', revokeObjectUrl);
     }
 
@@ -563,8 +637,10 @@
         if (!session || !global.WatchTogetherStore) return notify('当前会话不可用', 'warning');
         state = await global.WatchTogetherStore.loadState(session.id);
         messages = await global.WatchTogetherStore.loadMessages(session.id);
+        if (danmaku) { danmaku.clear(); danmaku.setMessages(messages, true); }
         playlist = await global.WatchTogetherStore.loadPlaylist(session.id);
         localFiles.clear();
+        if (localMedia) localMedia.clear();
         revokeObjectUrl();
         video.pause();
         video.removeAttribute('src');
@@ -572,6 +648,7 @@
         video.volume = state.volume;
         page.querySelector('.shiki-watch-session').textContent = '与「' + (session.name || '当前会话') + '」一起看';
         page.querySelector('.shiki-watch-auto-input').checked = state.autoInteractionEnabled;
+        renderSenderOptions();
         renderPlaylist();
         const item = currentItem();
         page.querySelector('.shiki-watch-video-name').textContent = item ? item.name : '未选择视频';
@@ -587,6 +664,7 @@
         if (!page) return;
         openState = false;
         clearAutoTimer();
+        if (danmaku) danmaku.clear();
         if (video) video.pause();
         saveNow();
         if (objectUrls.current()) {
@@ -594,6 +672,7 @@
             video.removeAttribute('src');
             video.load();
         }
+        if (localMedia) localMedia.clear();
         page.hidden = true;
         document.body.classList.remove('shiki-record-page-active');
     }
@@ -611,6 +690,8 @@
         close: close,
         end: endWatching,
         createObjectUrlLifecycle: createObjectUrlLifecycle,
+        createSenderOptions: createSenderOptions,
+        availableSenders: availableSenders,
         getDebugSnapshot: function () {
             const objectUrlStats = objectUrls.stats();
             return {
@@ -626,7 +707,8 @@
                 stateWrites: stateWrites,
                 messages: messages.length,
                 playlistItems: playlist.items.length,
-                runtimeFiles: localFiles.size
+                runtimeFiles: localFiles.size,
+                danmaku: danmaku ? danmaku.getDebugSnapshot() : null
             };
         }
     });

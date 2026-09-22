@@ -280,28 +280,67 @@ function deduplicateContentArray(arr, baseSystemArray = []) {
             } catch (e) { console.warn("音频播放失败:", e); }
         };
 
-        let pendingSaveCallbacks = [];
-        const throttledSaveData = (afterSave) => {
-            if (typeof afterSave === 'function') pendingSaveCallbacks.push(afterSave);
-            if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
-            saveTimeout = setTimeout(() => {
-                try {
-                    const callbacks = pendingSaveCallbacks.splice(0);
-                    const maybePromise = saveData();
-                    if (maybePromise && typeof maybePromise.then === 'function') {
-                        maybePromise.then(result => {
-                            callbacks.forEach(callback => {
-                                try { callback(result); } catch (error) { console.warn('[throttledSaveData] 保存后处理失败:', error); }
-                            });
-                        }).catch(e => console.error('[throttledSaveData] 保存失败:', e));
-                    } else {
-                        callbacks.forEach(callback => callback());
-                    }
-                } catch (e) {
-                    console.error('[throttledSaveData] 保存失败:', e);
-                }
-            }, 120);
+        const pendingSessionSaveTimers = new Map();
+
+        const runCapturedSessionSave = sessionId => {
+            const id = String(sessionId || '');
+            const pending = pendingSessionSaveTimers.get(id);
+            if (!pending) return Promise.resolve(null);
+            clearTimeout(pending.timer);
+            pendingSessionSaveTimers.delete(id);
+            let maybePromise;
+            try {
+                maybePromise = saveData(id);
+            } catch (error) {
+                maybePromise = Promise.reject(error);
+            }
+            maybePromise = Promise.resolve(maybePromise);
+            return maybePromise.then(result => {
+                pending.callbacks.forEach(callback => {
+                    try { callback(result); }
+                    catch (error) { console.warn('[throttledSaveData] 保存后处理失败:', error); }
+                });
+                return result;
+            }).catch(error => {
+                console.error('[throttledSaveData] 保存失败:', error);
+                throw error;
+            });
         };
+
+        const throttledSaveData = (afterSave, sessionIdOverride) => {
+            const capturedSessionId = String(sessionIdOverride || SESSION_ID || '');
+            if (!capturedSessionId) {
+                console.warn('[throttledSaveData] session id 不可用，已跳过保存');
+                return;
+            }
+            const existing = pendingSessionSaveTimers.get(capturedSessionId);
+            const callbacks = existing ? existing.callbacks : [];
+            if (typeof afterSave === 'function') callbacks.push(afterSave);
+            if (existing) clearTimeout(existing.timer);
+            const timer = setTimeout(() => {
+                runCapturedSessionSave(capturedSessionId).catch(function () {});
+            }, 120);
+            pendingSessionSaveTimers.set(capturedSessionId, { timer: timer, callbacks: callbacks });
+            saveTimeout = timer;
+        };
+
+        window.flushThrottledSaveData = sessionId => {
+            const id = String(sessionId || SESSION_ID || '');
+            return id ? runCapturedSessionSave(id) : Promise.resolve(null);
+        };
+
+        window.cancelThrottledSaveData = sessionId => {
+            const id = String(sessionId || '');
+            if (!id) return false;
+            const pending = pendingSessionSaveTimers.get(id);
+            if (!pending) return false;
+            clearTimeout(pending.timer);
+            pendingSessionSaveTimers.delete(id);
+            if (saveTimeout === pending.timer) saveTimeout = null;
+            return true;
+        };
+
+        window.getPendingSessionSaveIds = () => Array.from(pendingSessionSaveTimers.keys());
 
 async function applyCustomFont(url) {
     if (!url || !url.trim()) {

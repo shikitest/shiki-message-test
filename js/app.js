@@ -135,6 +135,14 @@ await safeAwait(loadData());
                     if (window.SessionGroupStore) cleanupTasks.push(window.SessionGroupStore.remove(sessionId));
                     if (window.ConversationAvatarStore) cleanupTasks.push(window.ConversationAvatarStore.remove(sessionId));
                     if (window.WatchTogetherStore) cleanupTasks.push(window.WatchTogetherStore.remove(sessionId));
+                    if (window.MemberReplyStore) cleanupTasks.push(window.MemberReplyStore.removeSession(sessionId));
+                    if (window.SessionRuntimeStore) window.SessionRuntimeStore.remove(sessionId);
+                    try {
+                        localStorage.removeItem('BACKUP_V1_critical:' + sessionId);
+                        localStorage.removeItem('BACKUP_V1_timestamp:' + sessionId);
+                    } catch (error) {
+                        console.warn('[AppShell] 新会话紧急日志清理失败:', error);
+                    }
                     await Promise.all(cleanupTasks.map(task => Promise.resolve(task).catch(error => {
                         console.warn('[AppShell] 新会话附属数据清理失败:', error);
                     })));
@@ -438,12 +446,11 @@ updateLoader('正在渲染我们的世界...', '70%');
 
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
-                try {
-                    if (typeof saveTimeout !== 'undefined') clearTimeout(saveTimeout);
-                } catch (e) {}
                 try { _backupCriticalData(); } catch (e) { console.warn('[visibilitychange] 紧急备份失败:', e); }
                 try {
-                    const p = saveData();
+                    const p = typeof window.flushThrottledSaveData === 'function'
+                        ? window.flushThrottledSaveData(SESSION_ID).then(function () { return saveData(SESSION_ID); })
+                        : saveData(SESSION_ID);
                     if (p && typeof p.catch === 'function') {
                         p.catch(e => console.error('[visibilitychange] 保存失败:', e));
                     }

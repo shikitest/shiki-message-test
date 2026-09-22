@@ -13,6 +13,7 @@
     let isCreatingConversation = false;
     let createTransactions = 0;
     let reloadRequests = 0;
+    let sessionReloadGeneration = 0;
     const conversationRowCache = new Map();
     let avatarRenderVersion = 0;
 
@@ -412,25 +413,38 @@
     }
 
     async function requestSessionReload(sessionId, groupSetup, reason) {
+        const requestedSessionId = String(sessionId || '');
+        const reloadGeneration = ++sessionReloadGeneration;
+        if (!requestedSessionId || !getSessions().some(function (session) { return String(session.id) === requestedSessionId; })) {
+            notify('目标会话不存在，已取消切换', 'warning');
+            return false;
+        }
         const currentSessionId = context.getCurrentSessionId();
         if (currentSessionId && typeof global.saveDataForSession === 'function') {
             try {
+                if (typeof global.flushThrottledSaveData === 'function') {
+                    await global.flushThrottledSaveData(currentSessionId);
+                }
+                if (reloadGeneration !== sessionReloadGeneration) return false;
                 const saveResult = await global.saveDataForSession(currentSessionId);
                 if (saveResult && Array.isArray(saveResult.failed) && saveResult.failed.length) {
                     throw new Error('Failed storage groups: ' + saveResult.failed.join(', '));
                 }
-                if (typeof global.flushPendingSessionSaves === 'function') await global.flushPendingSessionSaves();
+                if (typeof global.flushPendingSessionSaves === 'function') await global.flushPendingSessionSaves(currentSessionId);
+                if (reloadGeneration !== sessionReloadGeneration) return false;
             } catch (error) {
                 console.warn('[AppShell] 切换会话前保存失败:', error);
                 notify('当前会话保存失败，请重试后再切换', 'error');
                 return false;
             }
         }
-        if (!queueNavigation(sessionId, groupSetup, reason)) {
+        if (global.SessionRuntimeStore) global.SessionRuntimeStore.invalidate();
+        if (reloadGeneration !== sessionReloadGeneration) return false;
+        if (!queueNavigation(requestedSessionId, groupSetup, reason)) {
             notify('浏览器无法保存页面切换状态，刷新后请再次点击会话', 'warning');
         }
         reloadRequests += 1;
-        window.location.hash = String(sessionId);
+        window.location.hash = requestedSessionId;
         window.location.reload();
         return true;
     }
@@ -531,7 +545,11 @@
                 rollbackNewSession: context.rollbackNewSession
             }, type, name);
             closeCreateDialog();
-            requestSessionReload(id, type === 'group', 'created');
+            const navigationStarted = await requestSessionReload(id, type === 'group', 'created');
+            if (!navigationStarted) {
+                notify('会话已创建，但当前会话尚未保存，因此没有自动切换', 'warning');
+                renderConversations(root.querySelector('#shiki-conversation-search-input').value);
+            }
         } catch (error) {
             console.error('[AppShell] 创建会话失败:', error);
             notify('创建失败，旧会话未受影响', 'error');
@@ -712,6 +730,7 @@
                 creatingConversation: isCreatingConversation,
                 createTransactions: createTransactions,
                 reloadRequests: reloadRequests,
+                sessionReloadGeneration: sessionReloadGeneration,
                 documentClickListeners: 0,
                 rootClickListeners: initialized ? 1 : 0,
                 rootInputListeners: initialized ? 1 : 0,

@@ -43,6 +43,7 @@ var groupChatSettings = (function() {
 var _legacyGroupChatSettings = groupChatSettings;
 var _activeGroupSessionId = null;
 var _activeGroupSessionScoped = false;
+var _groupSessionActivationGeneration = 0;
 (function loadGroupAvatars() {
     if (!window.localforage) return;
     var members = groupChatSettings.members || [];
@@ -271,6 +272,11 @@ window.deleteGroupMember = function(idx) {
     if (_activeGroupSessionScoped && removed && removed.id && window.SessionGroupStore) {
         window.SessionGroupStore.removeMemberAvatar(_activeGroupSessionId, removed.id).catch(function() {});
     }
+    if (_activeGroupSessionScoped && removed && removed.id && window.MemberReplyStore) {
+        window.MemberReplyStore.remove(_activeGroupSessionId, removed.id).catch(function(error) {
+            console.warn('群成员字卡清理失败:', error);
+        });
+    }
     groupChatSettings.members.splice(idx, 1);
     saveGroupChatSettings();
     renderGroupMembersList();
@@ -341,21 +347,28 @@ window.isGroupChatEnabled = function() {
 
 window.activateGroupChatSession = async function(sessionId, options) {
     var opts = options || {};
-    _activeGroupSessionId = String(sessionId || '');
+    var requestedSessionId = String(sessionId || '');
+    var activationGeneration = ++_groupSessionActivationGeneration;
+    _activeGroupSessionId = requestedSessionId;
     _activeGroupSessionScoped = false;
-    if (!_activeGroupSessionId || !window.SessionGroupStore) return groupChatSettings;
+    if (!requestedSessionId || !window.SessionGroupStore) return groupChatSettings;
     if (!opts.isGroup) {
         groupChatSettings = { enabled: false, showAvatar: true, showName: true, members: [] };
         _activeGroupSessionScoped = true;
         updateGroupModeUI();
         return groupChatSettings;
     }
-    var stored = await window.SessionGroupStore.get(_activeGroupSessionId);
+    var stored = await window.SessionGroupStore.get(requestedSessionId);
+    if (activationGeneration !== _groupSessionActivationGeneration || _activeGroupSessionId !== requestedSessionId) return groupChatSettings;
     if (!stored && opts.migrateLegacy) {
-        stored = await window.SessionGroupStore.migrateLegacy(_activeGroupSessionId, _legacyGroupChatSettings);
+        stored = await window.SessionGroupStore.migrateLegacy(requestedSessionId, _legacyGroupChatSettings);
+        if (activationGeneration !== _groupSessionActivationGeneration || _activeGroupSessionId !== requestedSessionId) return groupChatSettings;
     }
-    if (!stored) stored = await window.SessionGroupStore.create(_activeGroupSessionId);
-    groupChatSettings = await window.SessionGroupStore.hydrate(_activeGroupSessionId, stored);
+    if (!stored) stored = await window.SessionGroupStore.create(requestedSessionId);
+    if (activationGeneration !== _groupSessionActivationGeneration || _activeGroupSessionId !== requestedSessionId) return groupChatSettings;
+    var hydrated = await window.SessionGroupStore.hydrate(requestedSessionId, stored);
+    if (activationGeneration !== _groupSessionActivationGeneration || _activeGroupSessionId !== requestedSessionId) return groupChatSettings;
+    groupChatSettings = hydrated;
     _activeGroupSessionScoped = true;
     updateGroupModeUI();
     return groupChatSettings;

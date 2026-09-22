@@ -409,6 +409,7 @@ fileInput.addEventListener('change', function(e) {
                 showModal(DOMElements.settingsModal.modal);
             });
             DOMElements.favoritesModal.favoritesBtn.addEventListener('click', () => {
+                if (window.SessionRuntimeStore) window.SessionRuntimeStore.bindModal(document.getElementById('group-chat-modal'), SESSION_ID);
                 showModal(document.getElementById('group-chat-modal'));
             });
 
@@ -440,6 +441,7 @@ window.syncTextGenerationModeUI = function() {
 
 const _chatSettingsEl = document.getElementById('chat-settings');
 if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
+    if (window.SessionRuntimeStore) window.SessionRuntimeStore.bindModal(DOMElements.chatModal.modal, SESSION_ID);
     hideModal(DOMElements.settingsModal.modal);
     
     const toggleSyncMap = {
@@ -510,6 +512,7 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
 });
             const _advancedEl = document.getElementById('advanced-settings');
             if (_advancedEl) _advancedEl.addEventListener('click', () => {
+                if (window.SessionRuntimeStore) window.SessionRuntimeStore.bindModal(DOMElements.advancedModal.modal, SESSION_ID);
                 hideModal(DOMElements.settingsModal.modal);
                 showModal(DOMElements.advancedModal.modal);
             });
@@ -518,37 +521,7 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
             if (_dataSettingsEl) _dataSettingsEl.addEventListener('click', () => {
                 hideModal(DOMElements.settingsModal.modal);
                 showModal(DOMElements.dataModal.modal);
-                (async function calcDmStorage() {
-                    try {
-                        let total = 0, msgsSize = 0, settingsSize = 0, mediaSize = 0;
-                        const keys = await localforage.keys();
-                        for (const k of keys) {
-                            const raw = await localforage.getItem(k);
-                            const str = typeof raw === 'string' ? raw : JSON.stringify(raw);
-                            const bytes = new Blob([str]).size;
-                            total += bytes;
-                            if (/messages|msgs/i.test(k)) msgsSize += bytes;
-                            else if (/avatar|image|photo|bg|background|wallpaper/i.test(k)) mediaSize += bytes;
-                            else settingsSize += bytes;
-                        }
-                        const fmt = b => b > 1048576 ? (b/1048576).toFixed(1)+'MB' : b > 1024 ? (b/1024).toFixed(0)+'KB' : b+'B';
-                        const MAX = 5 * 1024 * 1024;
-                        const pct = Math.min(100, Math.round(total / MAX * 100));
-                        const barEl = document.getElementById('dm-storage-bar');
-                        const totalEl = document.getElementById('dm-storage-total');
-                        if (barEl) barEl.style.width = pct + '%';
-                        if (totalEl) totalEl.textContent = fmt(total);
-                        const msgsEl = document.getElementById('dm-stat-msgs');
-                        const setEl = document.getElementById('dm-stat-settings');
-                        const medEl = document.getElementById('dm-stat-media');
-                        if (msgsEl) msgsEl.textContent = fmt(msgsSize);
-                        if (setEl) setEl.textContent = fmt(settingsSize);
-                        if (medEl) medEl.textContent = fmt(mediaSize);
-                    } catch(e) {
-                        const totalEl = document.getElementById('dm-storage-total');
-                        if (totalEl) totalEl.textContent = '无法读取';
-                    }
-                })();
+                if (typeof updateStorageUsageBar === 'function') updateStorageUsageBar();
             });
             const exportChatBtnDm = document.getElementById('export-chat-btn');
             const importChatBtnDm = document.getElementById('import-chat-btn');
@@ -1222,6 +1195,7 @@ if (_chatSettingsEl) _chatSettingsEl.addEventListener('click', () => {
 
             const _appearanceEl = document.getElementById('appearance-settings');
             if (_appearanceEl) _appearanceEl.addEventListener('click', () => {
+                if (window.SessionRuntimeStore) window.SessionRuntimeStore.bindModal(DOMElements.appearanceModal.modal, SESSION_ID);
                 hideModal(DOMElements.settingsModal.modal);
                 window.hideAppearancePanel && window.hideAppearancePanel();
                 renderBackgroundGallery();
@@ -1503,7 +1477,7 @@ if (_cancelEnvEl) _cancelEnvEl.addEventListener('click', () => {
             showNotification('新会话已创建', 'success');
         });
 
-        DOMElements.sessionModal.list.addEventListener('click', (e) => {
+        DOMElements.sessionModal.list.addEventListener('click', async (e) => {
             const item = e.target.closest('.session-item');
             if (!item) return;
             const sessionId = item.dataset.id;
@@ -1525,6 +1499,13 @@ if (_cancelEnvEl) _cancelEnvEl.addEventListener('click', () => {
                 if (confirm('确定要删除此会话及其所有聊天记录吗？此操作不可恢复')) {
 
                     const currentSessionId = SESSION_ID;
+
+                    if (typeof window.cancelThrottledSaveData === 'function') {
+                        window.cancelThrottledSaveData(sessionId);
+                    }
+                    if (typeof window.flushPendingSessionSaves === 'function') {
+                        await window.flushPendingSessionSaves(sessionId);
+                    }
 
                     sessionList = sessionList.filter(s => s.id !== sessionId);
 localforage.setItem(`${APP_PREFIX}sessionList`, sessionList);
@@ -1548,6 +1529,18 @@ if (window.ConversationMetaStore) {
     window.ConversationMetaStore.remove(sessionId).catch(function(error) {
         console.warn('会话界面数据清理失败:', error);
     });
+}
+if (window.MemberReplyStore) {
+    window.MemberReplyStore.removeSession(sessionId).catch(function(error) {
+        console.warn('群成员字卡数据清理失败:', error);
+    });
+}
+if (window.SessionRuntimeStore) window.SessionRuntimeStore.remove(sessionId);
+try {
+    localStorage.removeItem('BACKUP_V1_critical:' + sessionId);
+    localStorage.removeItem('BACKUP_V1_timestamp:' + sessionId);
+} catch (error) {
+    console.warn('会话紧急日志清理失败:', error);
 }
 
 // 同时清除 localStorage 和 localforage 中该会话的所有键

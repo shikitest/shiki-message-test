@@ -2175,7 +2175,8 @@ function _showBatchAddDialog() {
 function initReplyLibraryListeners() {
     const entryBtn = document.getElementById('custom-replies-function');
     if (entryBtn) {
-        entryBtn.addEventListener('click', () => {
+    entryBtn.addEventListener('click', () => {
+        if (window.SessionRuntimeStore) window.SessionRuntimeStore.bindModal(DOMElements.customRepliesModal.modal, SESSION_ID);
             hideModal(DOMElements.advancedModal.modal);
             currentMajorTab = 'reply';
             currentSubTab = 'custom';

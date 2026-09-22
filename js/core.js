@@ -334,33 +334,42 @@ showUserMessageTranslation: false,
 
 
 const loadData = async () => {
+    const targetSessionId = String(SESSION_ID || '');
+    if (!targetSessionId) throw new Error('SESSION_ID 未初始化，拒绝加载会话数据');
     try {
         settings = getDefaultSettings();
 
-        
-        const results = await Promise.allSettled([
-            localforage.getItem(getStorageKey('chatSettings')),
-            localforage.getItem(getStorageKey('chatMessages')),
-            localforage.getItem(getStorageKey('backgroundGallery')),
-            localforage.getItem(getStorageKey('customReplies')),
-            localforage.getItem(getStorageKey('customPokes')),
-            localforage.getItem(getStorageKey('customStatuses')),
-            localforage.getItem(getStorageKey('customMottos')),
-            localforage.getItem(getStorageKey('customIntros')),
-            localforage.getItem(getStorageKey('anniversaries')),
-            localforage.getItem(getStorageKey('stickerLibrary')),
+        const readSessionData = () => Promise.allSettled([
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'chatSettings')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'chatMessages')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'backgroundGallery')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'customReplies')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'customPokes')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'customStatuses')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'customMottos')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'customIntros')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'anniversaries')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'stickerLibrary')),
             localforage.getItem(`${APP_PREFIX}customThemes`),
-            localforage.getItem(getStorageKey('chatBackground')),
-            localforage.getItem(getStorageKey('partnerAvatar')),
-            localforage.getItem(getStorageKey('myAvatar')),
-            localforage.getItem(getStorageKey('partnerPersonas')), 
-            localforage.getItem(getStorageKey('showPartnerNameInChat')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'chatBackground')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'partnerAvatar')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'myAvatar')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'partnerPersonas')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'showPartnerNameInChat')),
             localforage.getItem(`${APP_PREFIX}themeSchemes`),
-            localforage.getItem(getStorageKey('myStickerLibrary')),
-            localforage.getItem(getStorageKey('customReplyGroups')),
-            localforage.getItem(getStorageKey('customPokeGroups')),
-            localforage.getItem(getStorageKey('customStatusGroups'))
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'myStickerLibrary')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'customReplyGroups')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'customPokeGroups')),
+            localforage.getItem(getSessionStorageKey(targetSessionId, 'customStatusGroups'))
         ]);
+        const runtimeLoad = window.SessionRuntimeStore
+            ? await window.SessionRuntimeStore.load(targetSessionId, readSessionData)
+            : { stale: false, value: await readSessionData(), token: null };
+        if (runtimeLoad.stale || String(SESSION_ID || '') !== targetSessionId) {
+            console.warn('[loadData] 已丢弃过期会话加载结果:', targetSessionId);
+            return false;
+        }
+        const results = runtimeLoad.value;
         const getVal = (index) => results[index].status === 'fulfilled' ? results[index].value : null;
 
         const savedSettings = getVal(0);
@@ -384,6 +393,24 @@ const loadData = async () => {
         const savedReplyGroups = getVal(18);
         const savedPokeGroups = getVal(19);
         const savedStatusGroups = getVal(20);
+
+        // Missing session keys must never leave values from a previous session in memory.
+        partnerPersonas = [];
+        showPartnerNameInChat = false;
+        messages = [];
+        savedBackgrounds = [];
+        customReplies = [];
+        customPokes = [...CONSTANTS.POKE_ACTIONS];
+        customStatuses = [...CONSTANTS.PARTNER_STATUSES];
+        customMottos = [...CONSTANTS.HEADER_MOTTOS];
+        customIntros = CONSTANTS.WELCOME_ANIMATIONS.map(a => `${a.line1}|${a.line2}`);
+        customEmojis = [];
+        anniversaries = [];
+        stickerLibrary = [];
+        myStickerLibrary = [];
+        window.customReplyGroups = [];
+        window.customPokeGroups = [];
+        window.customStatusGroups = [];
 
         if (savedPartnerPersonas) partnerPersonas = savedPartnerPersonas;
 
@@ -451,7 +478,7 @@ const loadData = async () => {
                 if (backup.anniversaries && Array.isArray(backup.anniversaries)) {
                     anniversaries = backup.anniversaries;
                 }
-                setTimeout(() => saveData(), 1000);
+                setTimeout(() => saveData(targetSessionId), 1000);
                 showNotification(
                     `已从备份恢复 ${messages.length} 条消息${backup._truncated ? '（备份为最近200条）' : ''}`,
                     'warning', 6000
@@ -480,7 +507,14 @@ const loadData = async () => {
         if (savedMyStickers) myStickerLibrary = savedMyStickers;
         if (savedCustomThemes) customThemes = savedCustomThemes;
         if (savedThemeSchemes) themeSchemes = savedThemeSchemes;
-        try { const ce = await localforage.getItem(getStorageKey('customEmojis')); if (ce && Array.isArray(ce)) customEmojis = ce; } catch(e) {}
+        try {
+            const ce = await localforage.getItem(getSessionStorageKey(targetSessionId, 'customEmojis'));
+            if (
+                String(SESSION_ID || '') !== targetSessionId ||
+                (window.SessionRuntimeStore && !window.SessionRuntimeStore.isCurrent(runtimeLoad.token))
+            ) return false;
+            if (ce && Array.isArray(ce)) customEmojis = ce;
+        } catch(e) {}
         window._customReplies = customReplies;
         window._CONSTANTS = CONSTANTS;
 
@@ -492,19 +526,24 @@ const loadData = async () => {
         if (savedChatBg) {
             applyBackground(savedChatBg);
         } else {
-            const lsBg = safeGetItem(getStorageKey('chatBackground'));
+            const lsBg = safeGetItem(getSessionStorageKey(targetSessionId, 'chatBackground'));
             if (lsBg) {
                 applyBackground(lsBg);
-                localforage.setItem(getStorageKey('chatBackground'), lsBg);
+                localforage.setItem(getSessionStorageKey(targetSessionId, 'chatBackground'), lsBg);
             }
         }
 
         try { await initMoodData(); } catch(e) { console.warn("心情数据加载失败", e); }
         try { await loadEnvelopeData(); } catch(e) { console.warn("信封数据加载失败", e); }
+        if (
+            String(SESSION_ID || '') !== targetSessionId ||
+            (window.SessionRuntimeStore && !window.SessionRuntimeStore.isCurrent(runtimeLoad.token))
+        ) return false;
         
         displayedMessageCount = HISTORY_BATCH_SIZE;
         
         setTimeout(() => {
+            if (String(SESSION_ID || '') !== targetSessionId) return;
             applyAllAvatarFrames();
             manageAutoSendTimer(); 
             checkEnvelopeStatus(); 
@@ -514,11 +553,17 @@ const loadData = async () => {
             }
         }, 100);
 
+        if (window.SessionRuntimeStore) {
+            if (!window.SessionRuntimeStore.activate(targetSessionId, undefined, runtimeLoad.token)) return false;
+        }
+        return true;
+
     } catch (e) {
         console.error("LoadData 内部致命错误:", e);
         settings = getDefaultSettings();
         messages = [];
         updateUI();
+        return false;
     }
 };
 
@@ -630,6 +675,10 @@ const saveData = (sessionIdOverride) => {
         console.warn('[saveData] SESSION_ID 尚未初始化，跳过保存以防数据写入临时 key');
         return Promise.resolve({ failed: ['sessionId'] });
     }
+    if (sessionIdOverride && String(SESSION_ID || '') !== targetSessionId) {
+        console.warn('[saveData] 已拒绝使用当前运行时快照写入其他会话:', targetSessionId);
+        return Promise.resolve({ failed: ['sessionMismatch'] });
+    }
 
     const sessionKey = key => `${APP_PREFIX}${targetSessionId}_${key}`;
     const saveSnapshot = {
@@ -660,6 +709,9 @@ const saveData = (sessionIdOverride) => {
             return img ? img.src : null;
         } catch(e) { return null; }
     })();
+    if (window.SessionRuntimeStore) {
+        window.SessionRuntimeStore.capture(targetSessionId, saveSnapshot);
+    }
     const performSave = async () => {
 
     const promises = [
@@ -725,10 +777,19 @@ const saveData = (sessionIdOverride) => {
     }, () => {
         if (_sessionSaveQueues.get(targetSessionId) === queued) _sessionSaveQueues.delete(targetSessionId);
     });
-    return queued;
+    return window.SessionRuntimeStore
+        ? window.SessionRuntimeStore.save(targetSessionId, function () { return queued; })
+        : queued;
 };
 
-window.flushPendingSessionSaves = () => Promise.allSettled(Array.from(_sessionSaveQueues.values()));
+window.flushPendingSessionSaves = sessionId => {
+    const id = String(sessionId || '');
+    if (id) {
+        const pending = _sessionSaveQueues.get(id);
+        return pending ? Promise.allSettled([pending]) : Promise.resolve([]);
+    }
+    return Promise.allSettled(Array.from(_sessionSaveQueues.values()));
+};
 window.saveDataForSession = sessionId => saveData(sessionId);
 
         function initializeRandomUI() {
@@ -3318,12 +3379,21 @@ function showModal(modalElement, focusElement = null) {
 
 
 
+        function getSessionStorageKey(sessionId, baseKey) {
+            const id = String(sessionId || '');
+            if (!id) {
+                console.error('[getSessionStorageKey] session id 尚未初始化，拒绝生成存储键:', baseKey);
+                throw new Error('Session id 未初始化，存储操作已中止');
+            }
+            return `${APP_PREFIX}${id}_${baseKey}`;
+        }
+
         function getStorageKey(baseKey) {
             if (!SESSION_ID) {
                 console.error('[getStorageKey] SESSION_ID 尚未初始化，拒绝生成存储键:', baseKey);
                 throw new Error('SESSION_ID 未初始化，存储操作已中止');
             }
-            return `${APP_PREFIX}${SESSION_ID}_${baseKey}`;
+            return getSessionStorageKey(SESSION_ID, baseKey);
         }
 
         async function migrateData() {
